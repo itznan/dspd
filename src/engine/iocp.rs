@@ -22,12 +22,14 @@ use rand_core::{Rng, SeedableRng};
 use rand_xoshiro::Xoshiro256PlusPlus;
 use windows::Win32::Foundation::{CloseHandle, HANDLE, INVALID_HANDLE_VALUE};
 use windows::Win32::Storage::FileSystem::{ReadFile, WriteFile};
-use windows::Win32::System::Performance::{QueryPerformanceCounter, QueryPerformanceFrequency};
 use windows::Win32::System::IO::{
     CreateIoCompletionPort, GetQueuedCompletionStatusEx, OVERLAPPED, OVERLAPPED_ENTRY,
 };
 
-use super::{buffers::AlignedBuffer, profile::Profile, stats::PassResult};
+use super::buffers::AlignedBuffer;
+use super::profile::Profile;
+use super::qpc::{qpc_elapsed_us, qpc_now};
+use super::stats::PassResult;
 
 /// Tracking record for an active in-flight asynchronous I/O request.
 struct InFlight {
@@ -319,31 +321,4 @@ impl Drop for IocpEngine {
             }
         }
     }
-}
-
-/// Retrieve the current QueryPerformanceCounter tick count.
-pub fn qpc_now() -> i64 {
-    let mut t = 0i64;
-    // SAFETY: QueryPerformanceCounter succeeds on all modern Windows installations.
-    unsafe {
-        let _ = QueryPerformanceCounter(&mut t);
-    }
-    t
-}
-
-/// Calculate elapsed microseconds between two QPC tick counts using 128-bit arithmetic to prevent overflow.
-pub fn qpc_elapsed_us(start: i64, end: i64) -> u64 {
-    static FREQ: std::sync::OnceLock<i64> = std::sync::OnceLock::new();
-    let freq = *FREQ.get_or_init(|| {
-        let mut f = 0i64;
-        unsafe {
-            let _ = QueryPerformanceFrequency(&mut f);
-        }
-        f
-    });
-    if freq <= 0 {
-        return 0;
-    }
-    let diff = (end - start).max(0) as u128;
-    ((diff * 1_000_000) / freq as u128) as u64
 }

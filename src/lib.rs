@@ -1,9 +1,14 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 itznan
 
+pub mod cli;
 pub mod drives;
 pub mod engine;
+pub mod file;
 pub mod report;
+pub mod runner;
+pub mod signal;
+pub mod ui;
 
 use anyhow::{Context, Result};
 

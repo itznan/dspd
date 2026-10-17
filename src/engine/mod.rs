@@ -4,4 +4,5 @@
 pub mod buffers;
 pub mod iocp;
 pub mod profile;
+pub mod qpc;
 pub mod stats;

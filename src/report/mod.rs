@@ -3,6 +3,7 @@
 
 pub mod csv;
 pub mod html;
+pub mod styles;
 
 use serde::{Deserialize, Serialize};
 use windows::Win32::System::Com::CoTaskMemFree;
