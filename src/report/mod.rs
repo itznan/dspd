@@ -3,6 +3,7 @@
 
 pub mod csv;
 pub mod html;
+pub mod json;
 pub mod styles;
 
 use serde::{Deserialize, Serialize};

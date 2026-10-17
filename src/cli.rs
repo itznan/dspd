@@ -47,8 +47,16 @@ pub struct Args {
     #[arg(long)]
     pub output_dir: Option<PathBuf>,
 
-    /// Skip HTML report generation
+    /// Output report in JSON format to console
     #[arg(long)]
+    pub json: bool,
+
+    /// Generate HTML report (disabled by default; JSON & CSV are standard)
+    #[arg(long)]
+    pub html: bool,
+
+    /// Skip HTML report generation (deprecated: HTML is now disabled by default)
+    #[arg(long, hide = true)]
     pub no_html: bool,
 
     /// Skip SSD wear confirmation prompt

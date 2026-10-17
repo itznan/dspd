@@ -21,6 +21,7 @@ use crate::engine::stats::{average_passes, PassResult};
 use crate::file::{open_benchmark_file, prepare_test_file, resolve_test_file_path, FileGuard};
 use crate::report::csv::write_csv;
 use crate::report::html::write_html;
+use crate::report::json::{to_json_string, write_json};
 use crate::report::ReportRow;
 use crate::signal::{is_cancelled, CANCELLED};
 use crate::ui::{format_latency, format_latency_u64, print_summary_tables};
@@ -136,16 +137,34 @@ pub fn benchmark_drive(
     // Print CrystalDiskMark layout table in console
     print_summary_tables(&rows, drive);
 
-    // Export CSV and HTML reports
+    // Export CSV and JSON reports
     let timestamp = Local::now().format("%Y%m%d_%H%M%S");
     let csv_path = output_dir.join(format!("dspd_report_{}_{}.csv", drive.letter, timestamp));
     write_csv(&csv_path, &rows)?;
     println!("  CSV Report : {}", csv_path.display());
 
-    if !args.no_html {
+    let json_path = output_dir.join(format!("dspd_report_{}_{}.json", drive.letter, timestamp));
+    let json_report = write_json(
+        &json_path,
+        &rows,
+        drive,
+        test_size,
+        args.passes,
+        args.duration,
+        args.warmup,
+    )?;
+    println!("  JSON Report: {}", json_path.display());
+
+    // Generate HTML report only if explicitly requested
+    if args.html && !args.no_html {
         let html_path = output_dir.join(format!("dspd_report_{}_{}.html", drive.letter, timestamp));
         write_html(&html_path, &rows, drive, test_size)?;
         println!("  HTML Report: {}", html_path.display());
+    }
+
+    if args.json {
+        println!("\n─── JSON Output ───");
+        println!("{}", to_json_string(&json_report)?);
     }
     println!();
 
