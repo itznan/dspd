@@ -25,23 +25,46 @@
 
 ---
 
-## Quick Start (Interactive Drive Selector)
+## Quick Start
 
-Scan all connected drives (internal NVMe/SATA SSDs/HDDs, USB pen drives, external storage), interactively select a drive, and benchmark immediately:
+Open **PowerShell** (Administrator not required) and run:
 
 ```powershell
-iex (irm https://raw.githubusercontent.com/itznan/dspd/main/dspd.ps1)
+iex (irm https://github.com/itznan/dspd/releases/latest/download/dspd.ps1)
 ```
 
-To pass custom parameters via one-liner (e.g. 512 MiB test, 1 pass, skip prompt):
+This downloads the latest `dspd` release, lists all connected drives (NVMe, SATA, USB, external),
+asks which one to test, and benchmarks it. You will be asked to confirm before any data is written.
+
+<details>
+<summary>Prefer to inspect the script first?</summary>
+
 ```powershell
-& ([scriptblock]::Create((irm https://raw.githubusercontent.com/itznan/dspd/main/dspd.ps1))) -Size 512MiB -Passes 1 -Yes
+irm https://github.com/itznan/dspd/releases/latest/download/dspd.ps1 -OutFile dspd.ps1
+notepad .\dspd.ps1
+.\dspd.ps1
+```
+</details>
+
+### Options
+
+Use the same script with parameters:
+
+```powershell
+$s = irm https://github.com/itznan/dspd/releases/latest/download/dspd.ps1
+& ([scriptblock]::Create($s)) -Size 512MiB -Passes 1
 ```
 
-Or run locally from cloned repo:
-```powershell
-.\dspd.ps1 -Size 512MiB -Passes 1 -Yes
-```
+| Parameter   | Default | Meaning                              |
+|-------------|---------|--------------------------------------|
+| `-Size`     | `1GiB`  | Test file size                       |
+| `-Passes`   | `3`     | Passes per test                      |
+| `-Duration` | `5`     | Seconds per pass                     |
+| `-Profile`  |         | Run one profile only                 |
+| `-Yes`      |         | Skip the SSD-wear confirmation       |
+
+> [!WARNING]
+> Benchmarks write several GiB to the drive. Avoid `-Yes` on SSDs you want to keep wear-free.
 
 ---
 

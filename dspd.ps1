@@ -8,8 +8,9 @@
 # Usage:
 #   .\dspd.ps1
 #   .\dspd.ps1 -Size 512MiB -Passes 1 -Yes
-#   iex (irm https://raw.githubusercontent.com/itznan/dspd/main/dspd.ps1)
-#   & ([scriptblock]::Create((irm https://raw.githubusercontent.com/itznan/dspd/main/dspd.ps1))) -Size 512MiB -Passes 1 -Yes
+#   iex (irm https://github.com/itznan/dspd/releases/latest/download/dspd.ps1)
+#   $s = irm https://github.com/itznan/dspd/releases/latest/download/dspd.ps1
+#   & ([scriptblock]::Create($s)) -Size 512MiB -Passes 1
 
 [CmdletBinding()]
 param(
@@ -31,7 +32,7 @@ if ($Elevate) {
     if (-not $isAdmin) {
         Write-Host "[*] Elevating to Administrator..." -ForegroundColor Cyan
         try {
-            $cmd = if ($PSCommandPath) { "& '$PSCommandPath'" } else { "iex (irm https://raw.githubusercontent.com/itznan/dspd/main/dspd.ps1)" }
+            $cmd = if ($PSCommandPath) { "& '$PSCommandPath'" } else { "iex (irm https://github.com/itznan/dspd/releases/latest/download/dspd.ps1)" }
             Start-Process powershell.exe -ArgumentList "-NoProfile -ExecutionPolicy Bypass -Command `"$cmd`"" -Verb RunAs
             exit
         } catch {

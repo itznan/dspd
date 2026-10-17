@@ -92,5 +92,6 @@ jobs:
             dspd-${{ github.ref_name }}-${{ matrix.target }}.zip.sha256
             installer/Output/*.exe
             installer/Output/*.sha256
+            dspd.ps1
           generate_release_notes: true
 
