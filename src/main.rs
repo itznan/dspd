@@ -3,6 +3,8 @@
 
 //! Main entry point for dspd: Fast, safe disk benchmarking CLI and GUI for Windows.
 
+#![windows_subsystem = "windows"]
+
 use anyhow::{Context, Result};
 use clap::Parser;
 
@@ -19,13 +21,28 @@ use dspd::ui::{print_validation_commands, prompt_ssd_wear};
 fn main() -> Result<()> {
     // If launched without command line arguments (e.g. double-clicked in Explorer), open desktop GUI
     if std::env::args().len() <= 1 {
+        #[cfg(target_os = "windows")]
+        unsafe {
+            let _ = windows::Win32::System::Console::FreeConsole();
+        }
         return run_gui();
+    }
+
+    // When running from CLI, attach to the parent terminal process to enable console I/O
+    #[cfg(target_os = "windows")]
+    unsafe {
+        use windows::Win32::System::Console::{AttachConsole, ATTACH_PARENT_PROCESS};
+        let _ = AttachConsole(ATTACH_PARENT_PROCESS);
     }
 
     let args = Args::parse();
 
-    // If explicitly requested via --gui flag, open desktop GUI
+    // If explicitly requested via --gui flag, detach terminal and open desktop GUI
     if args.gui {
+        #[cfg(target_os = "windows")]
+        unsafe {
+            let _ = windows::Win32::System::Console::FreeConsole();
+        }
         return run_gui();
     }
 
