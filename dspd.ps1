@@ -8,7 +8,8 @@
 # Usage:
 #   .\dspd.ps1
 #   .\dspd.ps1 -Size 512MiB -Passes 1 -Yes
-#   irm https://raw.githubusercontent.com/itznan/dspd/main/dspd.ps1 | iex
+#   iex (irm https://raw.githubusercontent.com/itznan/dspd/main/dspd.ps1)
+#   & ([scriptblock]::Create((irm https://raw.githubusercontent.com/itznan/dspd/main/dspd.ps1))) -Size 512MiB -Passes 1 -Yes
 
 [CmdletBinding()]
 param(
@@ -30,7 +31,7 @@ if ($Elevate) {
     if (-not $isAdmin) {
         Write-Host "[*] Elevating to Administrator..." -ForegroundColor Cyan
         try {
-            $cmd = if ($PSCommandPath) { "& '$PSCommandPath'" } else { "irm https://raw.githubusercontent.com/itznan/dspd/main/dspd.ps1 | iex" }
+            $cmd = if ($PSCommandPath) { "& '$PSCommandPath'" } else { "iex (irm https://raw.githubusercontent.com/itznan/dspd/main/dspd.ps1)" }
             Start-Process powershell.exe -ArgumentList "-NoProfile -ExecutionPolicy Bypass -Command `"$cmd`"" -Verb RunAs
             exit
         } catch {
@@ -41,68 +42,40 @@ if ($Elevate) {
 
 # 2. Locate or Download dspd.exe binary
 function Find-OrDownloadDspd {
-    $scriptDir = if ($PSScriptRoot) { $PSScriptRoot } else { (Get-Location).Path }
-    $candidates = @(
-        (Join-Path $scriptDir "dspd.exe"),
-        (Join-Path $scriptDir "target\release\dspd.exe"),
-        (Join-Path $scriptDir "target\debug\dspd.exe"),
-        (Join-Path (Get-Location).Path "dspd.exe"),
-        (Join-Path $env:TEMP "dspd\dspd.exe")
-    )
-
-    foreach ($path in $candidates) {
-        if ($path -and (Test-Path -Path $path -PathType Leaf)) {
-            return (Resolve-Path $path).Path
-        }
-    }
-
-    $inPath = Get-Command "dspd.exe" -ErrorAction SilentlyContinue
-    if ($inPath) {
-        return $inPath.Source
-    }
-
-    # Auto-download from GitHub releases
     $destDir = Join-Path $env:TEMP "dspd"
     $destExe = Join-Path $destDir "dspd.exe"
     $destZip = Join-Path $destDir "dspd_download.zip"
 
-    if (-not (Test-Path $destDir)) {
-        New-Item -ItemType Directory -Path $destDir -Force | Out-Null
+    # Use a local build only if the script is run from a real file
+    if ($PSScriptRoot) {
+        foreach ($rel in @("dspd.exe", "target\release\dspd.exe")) {
+            $p = Join-Path $PSScriptRoot $rel
+            if (Test-Path -LiteralPath $p -PathType Leaf) { return $p }
+        }
     }
 
-    Write-Host "[*] dspd.exe not found locally. Downloading latest release from GitHub..." -ForegroundColor Cyan
-    $repo = "itznan/dspd"
+    New-Item -ItemType Directory -Path $destDir -Force | Out-Null
+    Write-Host "[*] Downloading latest dspd release..." -ForegroundColor Cyan
+
+    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 -bor [Net.SecurityProtocolType]::Tls13
     $arch = if ($env:PROCESSOR_ARCHITECTURE -eq "ARM64") { "aarch64-pc-windows-msvc" } else { "x86_64-pc-windows-msvc" }
-    $downloadUrl = "https://github.com/$repo/releases/latest/download/dspd-v0.1.0-$arch.zip"
+    $repo = "itznan/dspd"
 
-    try {
-        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 -bor [Net.SecurityProtocolType]::Tls13
-        $apiUri = "https://api.github.com/repos/$repo/releases/latest"
-        $releaseInfo = Invoke-RestMethod -Uri $apiUri -UseBasicParsing -Headers @{ "User-Agent" = "dspd" } -ErrorAction SilentlyContinue
-        if ($releaseInfo -and $releaseInfo.assets) {
-            $matchedAsset = $releaseInfo.assets | Where-Object { $_.name -like "*$arch.zip" -and $_.name -notlike "*.sha256" } | Select-Object -First 1
-            if ($matchedAsset -and $matchedAsset.browser_download_url) {
-                $downloadUrl = $matchedAsset.browser_download_url
-            }
-        }
-    } catch {}
+    $release = Invoke-RestMethod -Uri "https://api.github.com/repos/$repo/releases/latest" `
+        -UseBasicParsing -Headers @{ "User-Agent" = "dspd" }
+    $asset = $release.assets |
+        Where-Object { $_.name -like "*$arch.zip" -and $_.name -notlike "*.sha256" } |
+        Select-Object -First 1
+    if (-not $asset) { throw "No release asset found for $arch" }
 
-    try {
-        Invoke-WebRequest -Uri $downloadUrl -OutFile $destZip -UseBasicParsing
-        Expand-Archive -Path $destZip -DestinationPath $destDir -Force
-        Remove-Item $destZip -Force -ErrorAction SilentlyContinue
+    Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $destZip -UseBasicParsing
+    Expand-Archive -Path $destZip -DestinationPath $destDir -Force
+    Remove-Item $destZip -Force -ErrorAction SilentlyContinue
 
-        # Check subdirectories if zip contained a folder
-        $extractedExe = Get-ChildItem -Path $destDir -Recurse -Filter "dspd.exe" | Select-Object -First 1
-        if ($extractedExe) {
-            Copy-Item -Path $extractedExe.FullName -Destination $destExe -Force
-            return $destExe
-        }
-    } catch {
-        Write-Warning "Could not download pre-built binary: $_"
-    }
-
-    throw "dspd.exe could not be found or downloaded. Please ensure dspd.exe is present in your folder or build it using 'cargo build --release'."
+    $exe = Get-ChildItem -Path $destDir -Recurse -Filter "dspd.exe" | Select-Object -First 1
+    if (-not $exe) { throw "dspd.exe not found in downloaded archive." }
+    if ($exe.FullName -ne $destExe) { Copy-Item $exe.FullName $destExe -Force }
+    return $destExe
 }
 
 $dspdPath = Find-OrDownloadDspd
@@ -175,9 +148,9 @@ if ($driveList.Count -eq 0) {
 $selectedItem = $null
 
 while ($null -eq $selectedItem) {
-    $prompt = "Select a drive to benchmark [1-$($driveList.Count) or drive letter, default: 1]: "
-    Write-Host $prompt -NoNewline -ForegroundColor Green
-    $selection = [Console]::ReadLine().Trim()
+    $prompt = "Select a drive to benchmark [1-$($driveList.Count) or drive letter, default: 1]"
+    $rawInput = Read-Host -Prompt $prompt
+    $selection = if ($rawInput) { $rawInput.Trim() } else { "" }
 
     if ([string]::IsNullOrWhiteSpace($selection)) {
         $selectedItem = $driveList[0]

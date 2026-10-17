@@ -33,9 +33,14 @@ Scan all connected drives (internal NVMe/SATA SSDs/HDDs, USB pen drives, externa
 iex (irm https://raw.githubusercontent.com/itznan/dspd/main/dspd.ps1)
 ```
 
-Or run the local script:
+To pass custom parameters via one-liner (e.g. 512 MiB test, 1 pass, skip prompt):
 ```powershell
-.\dspd.ps1
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/itznan/dspd/main/dspd.ps1))) -Size 512MiB -Passes 1 -Yes
+```
+
+Or run locally from cloned repo:
+```powershell
+.\dspd.ps1 -Size 512MiB -Passes 1 -Yes
 ```
 
 ---
