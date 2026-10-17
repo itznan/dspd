@@ -25,16 +25,40 @@
 
 ---
 
+## Quick Start (Interactive Drive Selector)
+
+Scan all connected drives (internal NVMe/SATA SSDs/HDDs, USB pen drives, external storage), interactively select a drive, and benchmark immediately:
+
+```powershell
+irm https://raw.githubusercontent.com/itznan/dspd/main/dspd.ps1 | iex
+```
+
+Or run the local script:
+```powershell
+.\dspd.ps1
+```
+
+---
+
 ## Installation
 
-### From Source
+### 1. Windows Installer (`Setup.exe`)
+Download the latest installer from [GitHub Releases](https://github.com/itznan/dspd/releases):
+- **`dspd-Setup-v0.1.0-x86_64.exe`** (Standard 64-bit Windows)
+- **`dspd-Setup-v0.1.0-arm64.exe`** (ARM64 Windows)
+
+The setup wizard installs `dspd` into `Program Files`, adds `dspd` to the system `PATH` so you can use it anywhere, and registers Start Menu shortcuts.
+
+### 2. Standalone Archive
+Download and extract `dspd-v<version>-x86_64-pc-windows-msvc.zip` from [Releases](https://github.com/itznan/dspd/releases).
+
+### 3. Build From Source
 ```powershell
-cargo install --path .
-```
-Or build locally:
-```powershell
+git clone https://github.com/itznan/dspd.git
+cd dspd
 cargo build --release
 ```
+The optimized executable will be located at `target\release\dspd.exe`.
 
 ---
 

@@ -43,6 +43,9 @@ jobs:
       - name: Build release executable
         run: cargo build --release --target ${{ matrix.target }}
 
+      - name: Install Inno Setup
+        run: choco install innosetup --no-progress -y
+
       - name: Package artifact & generate SHA256 checksum
         shell: pwsh
         run: |
@@ -51,12 +54,35 @@ jobs:
           $dir    = "dspd-${ver}-${target}"
           New-Item -ItemType Directory -Force -Path $dir | Out-Null
           Copy-Item "target/${target}/release/dspd.exe" -Destination $dir
-          Copy-Item "README.md", "LICENSE" -Destination $dir
+          Copy-Item "dspd.ps1", "README.md", "LICENSE" -Destination $dir
           $zip = "${dir}.zip"
           Compress-Archive -Path $dir -DestinationPath $zip -Force
           $hash = (Get-FileHash -Path $zip -Algorithm SHA256).Hash.ToLower()
           "${hash}  ${zip}" | Out-File -Encoding ascii "${zip}.sha256"
           Write-Host "Created release bundle: $zip (SHA256: $hash)"
+
+      - name: Build Windows Setup Installer
+        shell: pwsh
+        run: |
+          $ver = "${{ github.ref_name }}".TrimStart('v')
+          $target = "${{ matrix.target }}"
+          $arch = if ($target -like "aarch64*") { "arm64" } else { "x86_64" }
+          $archMode = if ($target -like "aarch64*") { "arm64" } else { "x64compatible" }
+
+          $iscc = Get-Command "iscc.exe" -ErrorAction SilentlyContinue
+          $isccPath = if ($iscc) { $iscc.Source } else { "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" }
+
+          & $isccPath `
+            "/DMyAppVersion=${ver}" `
+            "/DMyAppTarget=${arch}" `
+            "/DArchitectureMode=${archMode}" `
+            "/DSourceExePath=..\target\${target}\release\dspd.exe" `
+            "installer/dspd.iss"
+
+          $setupFile = "installer/Output/dspd-Setup-v${ver}-${arch}.exe"
+          $hash = (Get-FileHash -Path $setupFile -Algorithm SHA256).Hash.ToLower()
+          "${hash}  $(Split-Path $setupFile -Leaf)" | Out-File -Encoding ascii "${setupFile}.sha256"
+          Write-Host "Created Windows Installer: $setupFile (SHA256: $hash)"
 
       - name: Upload release assets to GitHub Release
         uses: softprops/action-gh-release@v2
@@ -64,4 +90,7 @@ jobs:
           files: |
             dspd-${{ github.ref_name }}-${{ matrix.target }}.zip
             dspd-${{ github.ref_name }}-${{ matrix.target }}.zip.sha256
+            installer/Output/*.exe
+            installer/Output/*.sha256
           generate_release_notes: true
+
