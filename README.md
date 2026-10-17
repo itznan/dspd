@@ -1,25 +1,17 @@
 # dspd
 
-[![CI](https://github.com/itznan/dspd/actions/workflows/ci.yml/badge.svg)](https://github.com/itznan/dspd/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Latest Release](https://img.shields.io/github/v/release/itznan/dspd)](https://github.com/itznan/dspd/releases/latest)
 
 > Fast, safe, single-binary disk benchmarking for Windows, written in Rust.
 
-**dspd** is an open-source Windows disk benchmark tool built from scratch in Rust with its own native Win32 I/O Completion Port (IOCP) engine. It has zero external tool dependencies (no DiskSpd dependency) and replicates CrystalDiskMark 9's default test profiles.
-
----
-
-## Disclaimer
-
-> **dspd is an independent open-source project and is not affiliated with, sponsored by, or endorsed by Microsoft Corporation (DiskSpd) or Crystal Dew World (CrystalDiskMark).**
+**dspd** is an open-source Windows disk benchmark tool built from scratch in Rust with its own native Win32 I/O Completion Port (IOCP) storage engine. It runs without any external tool dependencies and provides accurate throughput, IOPS, and latency metrics.
 
 ---
 
 ## Features
 
 - **Native IOCP Engine**: Handcrafted Win32 I/O completion port scheduler managing concurrent in-flight requests.
-- **CrystalDiskMark 9 Profiles**:
+- **Benchmark Profiles**:
   - `SEQ1M Q8T1`: Sequential, 1 MiB blocks, queue depth 8, 1 thread
   - `SEQ1M Q1T1`: Sequential, 1 MiB blocks, queue depth 1, 1 thread
   - `RND4K Q32T1`: Random, 4 KiB blocks, queue depth 32, 1 thread
@@ -29,25 +21,18 @@
 - **Physical Drive Discovery**: Identifies drive model, bus type (NVMe, SATA, USB), media type (SSD vs. HDD), total capacity, and free space via Win32 IOCTLs (`IOCTL_STORAGE_QUERY_PROPERTY`).
 - **Safety Guards**: Automatically cleans up benchmark test files on normal exit, error, panic, or Ctrl+C.
 - **Reports**: Generates timestamped CSV and structured JSON reports.
-- **Validation**: Built-in `--validate` flag outputs equivalent DiskSpd command lines for exact cross-validation.
+- **Validation**: Built-in `--validate` flag outputs profile test specifications and parameters.
 
 ---
 
 ## Installation
 
-### Pre-built Binaries
-Download the latest pre-compiled single binary (`dspd.exe`) from [GitHub Releases](https://github.com/itznan/dspd/releases/latest) for:
-- Windows x64 (`x86_64-pc-windows-msvc`)
-- Windows ARM64 (`aarch64-pc-windows-msvc`)
-
 ### From Source
 ```powershell
-cargo install --git https://github.com/itznan/dspd
+cargo install --path .
 ```
-Or clone and build locally:
+Or build locally:
 ```powershell
-git clone https://github.com/itznan/dspd.git
-cd dspd
 cargo build --release
 ```
 
@@ -71,7 +56,7 @@ Options:
       --output-dir <OUTPUT_DIR>    Output directory for reports [default: Desktop]
       --json                       Output report in JSON format to console
       --yes                        Skip the SSD-wear confirmation prompt
-      --validate                   Print equivalent DiskSpd command lines for each profile
+      --validate                   Print benchmark profile specifications and test parameters
   -h, --help                       Print help
   -V, --version                    Print version
 ```
@@ -93,7 +78,7 @@ Run only random 4K queue depth 32 read/write:
 dspd.exe --drives C --profile "RND4K Q32T1"
 ```
 
-Show equivalent DiskSpd command lines:
+Show profile benchmark specifications:
 ```powershell
 dspd.exe --validate
 ```
@@ -142,7 +127,7 @@ Reports saved:
 
 - **Random Data**: The benchmark file and buffers are initialized with high-throughput PRNG (`rand_xoshiro`) pseudo-random data. This prevents transparent filesystem compression, deduplication, and SSD controller sparse optimizations from inflating numbers.
 - **Pre-allocation & Sequential Write**: The entire test file is sequentially written to disk before read tests begin so that reads never encounter unallocated sparse blocks.
-- **Unit Convention**: In accordance with storage benchmarking conventions (CrystalDiskMark), $1\text{ MB/s} = 1{,}000{,}000\text{ bytes/s}$.
+- **Unit Convention**: Standard storage benchmarking convention: $1\text{ MB/s} = 1{,}000{,}000\text{ bytes/s}$.
 - **Warmup Discard**: The initial warmup window (default 1s) issues real I/O requests to prime controller caches and queues, but its metrics are discarded from measurement averages.
 - **SLC Cache Caveat**: When testing large file sizes (e.g. 16 GiB+) on consumer SSDs, performance may drop once the drive's pseudo-SLC cache is exhausted. This reflects actual drive hardware behavior.
 
@@ -154,22 +139,16 @@ Benchmarking SSDs involves writing continuous streams of data to NAND flash memo
 
 ---
 
-## Validation with DiskSpd
+## Profile Specifications
 
-Run `dspd --validate` to view the equivalent parameters for Microsoft's `diskspd.exe`:
+Running `dspd --validate` displays the exact benchmark profile specifications:
 
-| Profile | Equivalent DiskSpd Command |
-|---|---|
-| `SEQ1M Q8T1 Read` | `diskspd.exe -b1M -d5 -W1 -t1 -o8 -si -Sh -w0 -L <file>` |
-| `SEQ1M Q8T1 Write` | `diskspd.exe -b1M -d5 -W1 -t1 -o8 -si -Sh -w100 -L <file>` |
-| `SEQ1M Q1T1 Read` | `diskspd.exe -b1M -d5 -W1 -t1 -o1 -si -Sh -w0 -L <file>` |
-| `SEQ1M Q1T1 Write` | `diskspd.exe -b1M -d5 -W1 -t1 -o1 -si -Sh -w100 -L <file>` |
-| `RND4K Q32T1 Read` | `diskspd.exe -b4K -d5 -W1 -t1 -o32 -r -Sh -w0 -L <file>` |
-| `RND4K Q32T1 Write` | `diskspd.exe -b4K -d5 -W1 -t1 -o32 -r -Sh -w100 -L <file>` |
-| `RND4K Q1T1 Read` | `diskspd.exe -b4K -d5 -W1 -t1 -o1 -r -Sh -w0 -L <file>` |
-| `RND4K Q1T1 Write` | `diskspd.exe -b4K -d5 -W1 -t1 -o1 -r -Sh -w100 -L <file>` |
-
-*(Note: `-Sh` disables both Windows software caching and disk hardware write-caching, equivalent to `FILE_FLAG_NO_BUFFERING | FILE_FLAG_WRITE_THROUGH`).*
+| Profile | Block Size | Queue Depth | Access Pattern | Description |
+|---|---|---|---|---|
+| `SEQ1M Q8T1` | 1 MiB | 8 | Sequential | Peak sequential throughput with deep queue |
+| `SEQ1M Q1T1` | 1 MiB | 1 | Sequential | Single-queue sequential transfer rate |
+| `RND4K Q32T1` | 4 KiB | 32 | Random | Peak random IOPS under heavy multi-request workload |
+| `RND4K Q1T1` | 4 KiB | 1 | Random | Real-world application random access and low-queue latency |
 
 ---
 

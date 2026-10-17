@@ -25,7 +25,7 @@ impl PassResult {
         })
     }
 
-    /// Throughput in MB/s (1 MB = 1,000,000 bytes, following CrystalDiskMark convention).
+    /// Throughput in MB/s (1 MB = 1,000,000 bytes).
     pub fn throughput_mb_s(&self) -> f64 {
         if self.elapsed_ns == 0 {
             return 0.0;

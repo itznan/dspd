@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 itznan
 
-//! Console user interface, interactive prompts, and CrystalDiskMark layout tables.
+//! Console user interface, interactive prompts, and summary performance tables.
 
 use anyhow::Result;
 use std::io::{stdin, stdout, Write};
@@ -10,7 +10,7 @@ use crate::drives::DriveInfo;
 use crate::engine::profile::ALL_PROFILES;
 use crate::report::ReportRow;
 
-const CDM_PROFILES: [&str; 4] = ["SEQ1M Q8T1", "SEQ1M Q1T1", "RND4K Q32T1", "RND4K Q1T1"];
+const SUMMARY_PROFILES: [&str; 4] = ["SEQ1M Q8T1", "SEQ1M Q1T1", "RND4K Q32T1", "RND4K Q1T1"];
 
 /// Format floating-point microsecond latency to readable units.
 pub fn format_latency(us: f64) -> String {
@@ -30,12 +30,12 @@ pub fn format_latency_u64(us: u64) -> String {
     }
 }
 
-/// Print equivalent DiskSpd command lines for validation purposes.
+/// Print profile specifications and configurations for validation purposes.
 pub fn print_validation_commands(duration: u64, warmup: u64) {
-    println!("Equivalent DiskSpd command lines for validation:\n");
+    println!("dspd benchmark profile configurations:\n");
     for p in ALL_PROFILES {
-        println!("  {}", p.diskspd_cmd(duration, warmup, false, "<file>"));
-        println!("  {}", p.diskspd_cmd(duration, warmup, true, "<file>"));
+        println!("  {}", p.spec(duration, warmup, false));
+        println!("  {}", p.spec(duration, warmup, true));
     }
 }
 
@@ -56,18 +56,18 @@ pub fn prompt_ssd_wear(test_size_gib: f64, num_profiles: usize, passes: u32) -> 
     Ok(trimmed == "y" || trimmed == "yes")
 }
 
-/// Print formatted CrystalDiskMark 9 console summary tables.
+/// Print formatted console performance summary tables.
 pub fn print_summary_tables(rows: &[ReportRow], drive: &DriveInfo) {
     println!("════════════════════════════════════════════════════════════════════════");
     println!(
-        "  CrystalDiskMark 9 Summary — Drive {}: ({})",
+        "  dspd Benchmark Summary — Drive {}: ({})",
         drive.letter, drive.model
     );
     println!("────────────────────────────────────────────────────────────────────────");
     println!("  Profile        │ Read (MB/s) │ Write (MB/s) │ Read IOPS │ Write IOPS");
     println!("────────────────────────────────────────────────────────────────────────");
 
-    for prof in CDM_PROFILES {
+    for prof in SUMMARY_PROFILES {
         let read = rows
             .iter()
             .find(|r| r.profile == prof && r.direction == "Read");
@@ -97,7 +97,7 @@ pub fn print_summary_tables(rows: &[ReportRow], drive: &DriveInfo) {
 
     println!("  Profile        │ Read Avg Lat │ Read p99 Lat │ Write Avg Lat │ Write p99 Lat");
     println!("────────────────────────────────────────────────────────────────────────");
-    for prof in CDM_PROFILES {
+    for prof in SUMMARY_PROFILES {
         let read = rows
             .iter()
             .find(|r| r.profile == prof && r.direction == "Read");

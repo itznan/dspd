@@ -133,7 +133,7 @@ pub fn benchmark_drive(
         println!();
     }
 
-    // Print CrystalDiskMark layout table in console
+    // Print summary performance tables in console
     print_summary_tables(&rows, drive);
 
     // Export CSV and JSON reports

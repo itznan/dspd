@@ -55,7 +55,7 @@ pub struct Args {
     #[arg(long)]
     pub yes: bool,
 
-    /// Print equivalent DiskSpd command lines for each profile
+    /// Print benchmark profile specifications and test parameters
     #[arg(long)]
     pub validate: bool,
 }
