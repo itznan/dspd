@@ -20,7 +20,6 @@ use crate::engine::profile::Profile;
 use crate::engine::stats::{average_passes, PassResult};
 use crate::file::{open_benchmark_file, prepare_test_file, resolve_test_file_path, FileGuard};
 use crate::report::csv::write_csv;
-use crate::report::html::write_html;
 use crate::report::json::{to_json_string, write_json};
 use crate::report::ReportRow;
 use crate::signal::{is_cancelled, CANCELLED};
@@ -154,13 +153,6 @@ pub fn benchmark_drive(
         args.warmup,
     )?;
     println!("  JSON Report: {}", json_path.display());
-
-    // Generate HTML report only if explicitly requested
-    if args.html && !args.no_html {
-        let html_path = output_dir.join(format!("dspd_report_{}_{}.html", drive.letter, timestamp));
-        write_html(&html_path, &rows, drive, test_size)?;
-        println!("  HTML Report: {}", html_path.display());
-    }
 
     if args.json {
         println!("\n─── JSON Output ───");

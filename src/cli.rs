@@ -51,14 +51,6 @@ pub struct Args {
     #[arg(long)]
     pub json: bool,
 
-    /// Generate HTML report (disabled by default; JSON & CSV are standard)
-    #[arg(long)]
-    pub html: bool,
-
-    /// Skip HTML report generation (deprecated: HTML is now disabled by default)
-    #[arg(long, hide = true)]
-    pub no_html: bool,
-
     /// Skip SSD wear confirmation prompt
     #[arg(long)]
     pub yes: bool,

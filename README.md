@@ -28,7 +28,7 @@
 - **Latency Percentiles**: Accurately measures individual I/O latency with `QueryPerformanceCounter` recorded in `hdrhistogram` (reports average and p99).
 - **Physical Drive Discovery**: Identifies drive model, bus type (NVMe, SATA, USB), media type (SSD vs. HDD), total capacity, and free space via Win32 IOCTLs (`IOCTL_STORAGE_QUERY_PROPERTY`).
 - **Safety Guards**: Automatically cleans up benchmark test files on normal exit, error, panic, or Ctrl+C.
-- **Reports**: Generates timestamped CSV and standalone, dark-themed HTML reports.
+- **Reports**: Generates timestamped CSV and structured JSON reports.
 - **Validation**: Built-in `--validate` flag outputs equivalent DiskSpd command lines for exact cross-validation.
 
 ---
@@ -69,7 +69,7 @@ Options:
       --include-removable          Include removable storage devices (e.g. USB flash drives)
       --profile <PROFILE>          Run a single named profile only (e.g. "RND4K Q32T1")
       --output-dir <OUTPUT_DIR>    Output directory for reports [default: Desktop]
-      --no-html                    Skip HTML report generation
+      --json                       Output report in JSON format to console
       --yes                        Skip the SSD-wear confirmation prompt
       --validate                   Print equivalent DiskSpd command lines for each profile
   -h, --help                       Print help
@@ -133,7 +133,7 @@ Capacity: 1863.0 GB | Free: 1240.5 GB
 
 Reports saved:
   CSV:  C:\Users\itznan\Desktop\dspd_report_20261017_190000.csv
-  HTML: C:\Users\itznan\Desktop\dspd_report_20261017_190000.html
+  JSON: C:\Users\itznan\Desktop\dspd_report_20261017_190000.json
 ```
 
 ---
