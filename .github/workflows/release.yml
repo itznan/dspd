@@ -1,0 +1,67 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+env:
+  CARGO_TERM_COLOR: always
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - x86_64-pc-windows-msvc
+          - aarch64-pc-windows-msvc
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain & target
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache Cargo dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-${{ matrix.target }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-${{ matrix.target }}-cargo-
+
+      - name: Build release executable
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Package artifact & generate SHA256 checksum
+        shell: pwsh
+        run: |
+          $ver    = "${{ github.ref_name }}"
+          $target = "${{ matrix.target }}"
+          $dir    = "dspd-${ver}-${target}"
+          New-Item -ItemType Directory -Force -Path $dir | Out-Null
+          Copy-Item "target/${target}/release/dspd.exe" -Destination $dir
+          Copy-Item "README.md", "LICENSE" -Destination $dir
+          $zip = "${dir}.zip"
+          Compress-Archive -Path $dir -DestinationPath $zip -Force
+          $hash = (Get-FileHash -Path $zip -Algorithm SHA256).Hash.ToLower()
+          "${hash}  ${zip}" | Out-File -Encoding ascii "${zip}.sha256"
+          Write-Host "Created release bundle: $zip (SHA256: $hash)"
+
+      - name: Upload release assets to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dspd-${{ github.ref_name }}-${{ matrix.target }}.zip
+            dspd-${{ github.ref_name }}-${{ matrix.target }}.zip.sha256
+          generate_release_notes: true
