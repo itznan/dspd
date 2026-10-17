@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 itznan
 
-//! Main entry point for dspd: Fast, safe disk benchmarking CLI for Windows.
+//! Main entry point for dspd: Fast, safe disk benchmarking CLI and GUI for Windows.
 
 use anyhow::{Context, Result};
 use clap::Parser;
@@ -9,6 +9,7 @@ use clap::Parser;
 use dspd::cli::{Args, VERSION};
 use dspd::drives;
 use dspd::engine::profile::{Profile, ALL_PROFILES};
+use dspd::gui::run_gui;
 use dspd::parse_size;
 use dspd::report::get_desktop_dir;
 use dspd::runner::benchmark_drive;
@@ -16,9 +17,19 @@ use dspd::signal::{is_cancelled, register_ctrl_handler};
 use dspd::ui::{print_validation_commands, prompt_ssd_wear};
 
 fn main() -> Result<()> {
-    println!("dspd v{} by itznan (github.com/itznan/dspd)\n", VERSION);
+    // If launched without command line arguments (e.g. double-clicked in Explorer), open desktop GUI
+    if std::env::args().len() <= 1 {
+        return run_gui();
+    }
 
     let args = Args::parse();
+
+    // If explicitly requested via --gui flag, open desktop GUI
+    if args.gui {
+        return run_gui();
+    }
+
+    println!("dspd v{} by itznan (github.com/itznan/dspd)\n", VERSION);
     register_ctrl_handler();
 
     if args.validate {

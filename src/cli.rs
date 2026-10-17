@@ -58,4 +58,8 @@ pub struct Args {
     /// Print benchmark profile specifications and test parameters
     #[arg(long)]
     pub validate: bool,
+
+    /// Launch graphical user interface (GUI)
+    #[arg(long)]
+    pub gui: bool,
 }
