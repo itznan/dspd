@@ -69,7 +69,7 @@ The optimized executable will be located at `target\release\dspd.exe`.
 
 ## Usage
 
-*Note: Benchmarking disks via direct hardware I/O and querying storage geometry requires Administrator privileges. An elevation manifest is embedded in `dspd.exe`.*
+*Note: Benchmarking runs out-of-the-box in standard user mode without requiring Administrator elevation. When Administrator privileges are available, dspd queries additional low-level physical drive geometry via Win32 IOCTLs.*
 
 ```text
 Usage: dspd.exe [OPTIONS]
