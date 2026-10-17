@@ -27,9 +27,10 @@ unsafe impl Sync for AlignedBuffer {}
 impl AlignedBuffer {
     /// Allocate `size` bytes via `VirtualAlloc` and initialize with non-zero random data.
     /// `size` must be a multiple of 4096.
+    #[allow(clippy::manual_is_multiple_of)]
     pub fn new_random(size: usize) -> Result<Self> {
         assert!(
-            size.is_multiple_of(4096),
+            size % 4096 == 0,
             "Buffer size must be sector-aligned (multiple of 4096)"
         );
 
