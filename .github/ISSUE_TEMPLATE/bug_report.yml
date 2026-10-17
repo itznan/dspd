@@ -1,0 +1,37 @@
+name: Bug Report
+description: Create a report to help us improve dspd
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: Thanks for taking the time to fill out this bug report!
+  - type: input
+    id: os_version
+    attributes:
+      label: Windows Version
+      description: What version of Windows are you running? (e.g. Windows 11 23H2 x64, Windows 11 ARM64)
+      placeholder: e.g. Windows 11 23H2 (Build 22631)
+    validations:
+      required: true
+  - type: input
+    id: drive_model
+    attributes:
+      label: Drive Model & Bus
+      description: What drive are you benchmarking?
+      placeholder: e.g. Samsung 990 Pro 2TB (NVMe)
+    validations:
+      required: true
+  - type: textarea
+    id: what_happened
+    attributes:
+      label: What happened?
+      description: Please describe what happened. Include any error messages or unexpected outputs.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Exact command line executed
+      placeholder: e.g. dspd.exe --drives C --size 1GiB
+    validations:
+      required: true

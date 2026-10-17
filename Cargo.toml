@@ -1,14 +1,18 @@
 [package]
-name        = "dspd"
-version     = "0.1.0"
-edition     = "2021"
-authors     = ["itznan"]
-repository  = "https://github.com/itznan/dspd"
-license     = "MIT"
-description = "Fast, safe, single-binary disk benchmarking for Windows, written in Rust."
-keywords    = ["benchmark", "disk", "io", "windows", "nvme"]
-categories  = ["command-line-utilities"]
-build       = "build.rs"
+name          = "dspd"
+version       = "0.1.0"
+edition       = "2021"
+rust-version  = "1.80.0"
+authors       = ["itznan"]
+repository    = "https://github.com/itznan/dspd"
+homepage      = "https://github.com/itznan/dspd"
+documentation = "https://github.com/itznan/dspd#readme"
+readme        = "README.md"
+license       = "MIT"
+description   = "Fast, safe, single-binary disk benchmarking for Windows, written in Rust."
+keywords      = ["benchmark", "disk", "io", "windows", "nvme"]
+categories    = ["command-line-utilities", "hardware-support"]
+build         = "build.rs"
 
 [lib]
 name = "dspd"
