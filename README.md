@@ -30,7 +30,7 @@
 Scan all connected drives (internal NVMe/SATA SSDs/HDDs, USB pen drives, external storage), interactively select a drive, and benchmark immediately:
 
 ```powershell
-irm https://raw.githubusercontent.com/itznan/dspd/main/dspd.ps1 | iex
+iex (irm https://raw.githubusercontent.com/itznan/dspd/main/dspd.ps1)
 ```
 
 Or run the local script:
