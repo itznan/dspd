@@ -37,35 +37,25 @@ param(
     [int]$Warmup = 1,
     [string]$Profile,
     [switch]$Json,
-    [switch]$Yes
+    [switch]$Yes,
+    [switch]$Elevate
 )
 
 $ErrorActionPreference = "Stop"
 
-# 1. Require Administrator Privileges for direct unbuffered disk IOCTL access
-$isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-if (-not $isAdmin) {
-    Write-Host "[*] Requesting Administrator elevation for direct disk benchmarking..." -ForegroundColor Cyan
-    $argList = @("-NoProfile", "-ExecutionPolicy", "Bypass")
-    if ($PSCommandPath) {
-        $argList += @("-File", "`"$PSCommandPath`"")
-        if ($PSBoundParameters.Count -gt 0) {
-            foreach ($key in $PSBoundParameters.Keys) {
-                $val = $PSBoundParameters[$key]
-                if ($val -is [switch] -and $val) {
-                    $argList += "-$key"
-                } elseif ($val -isnot [switch]) {
-                    $argList += "-$key `"$val`""
-                }
-            }
+# Optional self-elevation if -Elevate is explicitly requested
+if ($Elevate) {
+    $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+    if (-not $isAdmin) {
+        Write-Host "[*] Elevating to Administrator..." -ForegroundColor Cyan
+        try {
+            $cmd = if ($PSCommandPath) { "& '$PSCommandPath'" } else { "irm https://raw.githubusercontent.com/itznan/dspd/main/dspd.ps1 | iex" }
+            Start-Process powershell.exe -ArgumentList "-NoProfile -ExecutionPolicy Bypass -Command `"$cmd`"" -Verb RunAs
+            exit
+        } catch {
+            Write-Warning "Elevation declined or unavailable. Continuing in standard mode..."
         }
-    } else {
-        # Running via web one-liner (iex)
-        $argList += @("-Command", "irm https://raw.githubusercontent.com/itznan/dspd/main/dspd.ps1 | iex")
     }
-
-    Start-Process powershell.exe -ArgumentList ($argList -join ' ') -Verb RunAs
-    exit
 }
 
 # 2. Locate or Download dspd.exe binary
