@@ -1,33 +1,14 @@
 # SPDX-License-Identifier: MIT
 # Copyright (c) 2026 itznan.
-<#
-.SYNOPSIS
-    dspd Interactive Drive Benchmark Launcher for Windows.
-.DESCRIPTION
-    Scans all local drives, pen drives, removable USB storage, NVMe, and SATA SSDs/HDDs,
-    allows selecting a specific drive interactively, and runs dspd benchmarks.
-    Automatically obtains the dspd binary if not already present.
-.PARAMETER Size
-    Benchmark test file size (e.g., 512MiB, 1GiB, 4GiB). Default is 1GiB.
-.PARAMETER Passes
-    Number of benchmark passes per profile. Default is 3.
-.PARAMETER Duration
-    Duration of each pass in seconds. Default is 5.
-.PARAMETER Warmup
-    Warmup window in seconds. Default is 1.
-.PARAMETER Profile
-    Optional single profile name (e.g., "RND4K Q32T1", "SEQ1M Q8T1").
-.PARAMETER Json
-    Output formatted JSON to the console.
-.PARAMETER Yes
-    Skip SSD wear warning prompt.
-.EXAMPLE
-    .\dspd.ps1
-.EXAMPLE
-    .\dspd.ps1 -Size 512MiB -Passes 1 -Yes
-.EXAMPLE
-    irm https://raw.githubusercontent.com/itznan/dspd/main/dspd.ps1 | iex
-#>
+#
+# dspd Interactive Drive Benchmark Launcher for Windows.
+# Scans all storage devices (NVMe, SATA SSD/HDD, USB pen drives),
+# prompts for target selection, and executes dspd benchmarks.
+#
+# Usage:
+#   .\dspd.ps1
+#   .\dspd.ps1 -Size 512MiB -Passes 1 -Yes
+#   irm https://raw.githubusercontent.com/itznan/dspd/main/dspd.ps1 | iex
 
 [CmdletBinding()]
 param(
@@ -60,11 +41,12 @@ if ($Elevate) {
 
 # 2. Locate or Download dspd.exe binary
 function Find-OrDownloadDspd {
+    $scriptDir = if ($PSScriptRoot) { $PSScriptRoot } else { (Get-Location).Path }
     $candidates = @(
-        (Join-Path $PSScriptRoot "dspd.exe"),
-        (Join-Path $PSScriptRoot "target\release\dspd.exe"),
-        (Join-Path $PSScriptRoot "target\debug\dspd.exe"),
-        (Join-Path (Get-Location) "dspd.exe"),
+        (Join-Path $scriptDir "dspd.exe"),
+        (Join-Path $scriptDir "target\release\dspd.exe"),
+        (Join-Path $scriptDir "target\debug\dspd.exe"),
+        (Join-Path (Get-Location).Path "dspd.exe"),
         (Join-Path $env:TEMP "dspd\dspd.exe")
     )
 
