@@ -5,7 +5,6 @@ pub mod cli;
 pub mod drives;
 pub mod engine;
 pub mod file;
-pub mod gui;
 pub mod report;
 pub mod runner;
 pub mod signal;
