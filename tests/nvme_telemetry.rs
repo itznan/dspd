@@ -152,8 +152,19 @@ fn test_live_nvme_smart_query_and_monitor() {
 
 #[test]
 fn test_live_sata_drive_gracefully_unsupported() {
-    // Drive D: is a SATA drive on this machine
-    let monitor = NvmeThermalMonitor::start('D');
-    // SATA drive must return None without panicking
+    // Non-existent drive or non-NVMe drive must return None without panicking
+    let monitor = NvmeThermalMonitor::start('Z');
     assert!(monitor.is_none());
+
+    // If any discovered drive is not NVMe (e.g. SATA, USB, virtual), verify it returns None gracefully
+    for drive in dspd::drives::discover(true) {
+        if drive.bus_type != dspd::drives::BusType::NVMe {
+            let mon = NvmeThermalMonitor::start(drive.letter);
+            assert!(
+                mon.is_none(),
+                "Expected non-NVMe drive {} to return None",
+                drive.letter
+            );
+        }
+    }
 }
