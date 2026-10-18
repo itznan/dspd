@@ -14,7 +14,7 @@ use indicatif::{ProgressBar, ProgressStyle};
 use windows::Win32::Foundation::CloseHandle;
 
 use crate::cli::Args;
-use crate::drives::DriveInfo;
+use crate::drives::{DriveInfo, NvmeThermalMonitor};
 use crate::engine::iocp::IocpEngine;
 use crate::engine::profile::Profile;
 use crate::engine::stats::{average_passes, PassResult};
@@ -80,6 +80,9 @@ pub fn benchmark_drive(
         path: test_file_path.clone(),
     };
 
+    // Start background NVMe thermal telemetry polling if supported
+    let thermal_monitor = NvmeThermalMonitor::start(drive.letter);
+
     // Prepare test file with pseudo-random content
     prepare_test_file(&test_file_path, test_size)?;
 
@@ -109,6 +112,11 @@ pub fn benchmark_drive(
             p99_lat_us: read_avg.p99_latency_us(),
         });
 
+        // Sample telemetry between benchmark stages
+        if let Some(ref monitor) = thermal_monitor {
+            monitor.sample();
+        }
+
         // Direction 2: WRITE
         if is_cancelled() {
             break;
@@ -131,10 +139,18 @@ pub fn benchmark_drive(
             p99_lat_us: write_avg.p99_latency_us(),
         });
         println!();
+
+        // Sample telemetry between benchmark stages
+        if let Some(ref monitor) = thermal_monitor {
+            monitor.sample();
+        }
     }
 
+    // Stop background thermal monitoring and aggregate results
+    let thermal_report = thermal_monitor.map(|m| m.stop());
+
     // Print summary performance tables in console
-    print_summary_tables(&rows, drive);
+    print_summary_tables(&rows, drive, thermal_report.as_ref());
 
     // Export CSV and JSON reports
     let timestamp = Local::now().format("%Y%m%d_%H%M%S");
@@ -151,6 +167,7 @@ pub fn benchmark_drive(
         args.passes,
         args.duration,
         args.warmup,
+        thermal_report.clone(),
     )?;
     println!("  JSON Report: {}", json_path.display());
 

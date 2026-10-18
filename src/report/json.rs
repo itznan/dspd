@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 
 use super::ReportRow;
 use crate::cli::VERSION;
-use crate::drives::DriveInfo;
+use crate::drives::{DriveInfo, ThermalTelemetry};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct JsonReport {
@@ -21,6 +21,8 @@ pub struct JsonReport {
     pub drive: DriveMeta,
     pub configuration: TestConfig,
     pub results: Vec<ReportRow>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thermal: Option<ThermalTelemetry>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -45,6 +47,7 @@ pub struct TestConfig {
 }
 
 /// Construct a complete `JsonReport` structure from benchmark data.
+#[allow(clippy::too_many_arguments)]
 pub fn build_json_report(
     rows: &[ReportRow],
     drive: &DriveInfo,
@@ -52,6 +55,7 @@ pub fn build_json_report(
     passes: u32,
     duration: u64,
     warmup: u64,
+    thermal: Option<ThermalTelemetry>,
 ) -> JsonReport {
     JsonReport {
         tool: "dspd".to_string(),
@@ -75,6 +79,7 @@ pub fn build_json_report(
             warmup_secs: warmup,
         },
         results: rows.to_vec(),
+        thermal,
     }
 }
 
@@ -85,6 +90,7 @@ pub fn to_json_string(report: &JsonReport) -> Result<String> {
 }
 
 /// Serialize and write benchmark report to a JSON file.
+#[allow(clippy::too_many_arguments)]
 pub fn write_json(
     path: &Path,
     rows: &[ReportRow],
@@ -93,8 +99,10 @@ pub fn write_json(
     passes: u32,
     duration: u64,
     warmup: u64,
+    thermal: Option<ThermalTelemetry>,
 ) -> Result<JsonReport> {
-    let report = build_json_report(rows, drive, test_size_bytes, passes, duration, warmup);
+    let report =
+        build_json_report(rows, drive, test_size_bytes, passes, duration, warmup, thermal);
     let json_string = to_json_string(&report)?;
 
     std::fs::write(path, json_string)

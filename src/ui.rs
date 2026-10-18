@@ -6,7 +6,7 @@
 use anyhow::Result;
 use std::io::{stdin, stdout, Write};
 
-use crate::drives::DriveInfo;
+use crate::drives::{DriveInfo, ThermalTelemetry};
 use crate::engine::profile::ALL_PROFILES;
 use crate::report::ReportRow;
 
@@ -57,7 +57,11 @@ pub fn prompt_ssd_wear(test_size_gib: f64, num_profiles: usize, passes: u32) -> 
 }
 
 /// Print formatted console performance summary tables.
-pub fn print_summary_tables(rows: &[ReportRow], drive: &DriveInfo) {
+pub fn print_summary_tables(
+    rows: &[ReportRow],
+    drive: &DriveInfo,
+    thermal: Option<&ThermalTelemetry>,
+) {
     println!("════════════════════════════════════════════════════════════════════════");
     println!(
         "  dspd Benchmark Summary — Drive {}: ({})",
@@ -122,6 +126,38 @@ pub fn print_summary_tables(rows: &[ReportRow], drive: &DriveInfo) {
             "  {:<14} │ {} │ {} │ {} │ {}",
             prof, r_avg, r_p99, w_avg, w_p99
         );
+    }
+
+    if let Some(t) = thermal {
+        println!("────────────────────────────────────────────────────────────────────────");
+        println!(
+            "  Thermal        │ Temp: {}°C -> {}°C peak (end: {}°C)",
+            t.start_temp_c, t.peak_temp_c, t.end_temp_c
+        );
+        println!(
+            "  SMART Health   │ Spare: {}% │ Life Used: {}% │ Crit Temp Time: {} min",
+            t.available_spare_pct, t.percentage_used_pct, t.critical_temp_time_end_mins
+        );
+        if t.throttled {
+            println!("────────────────────────────────────────────────────────────────────────");
+            println!(
+                "  [!] WARNING: Thermal throttling likely impacted the results!"
+            );
+            if t.peak_temp_c >= 70 {
+                println!(
+                    "      - Drive temperature reached {}°C (crossed 70°C threshold).",
+                    t.peak_temp_c
+                );
+            }
+            if t.critical_temp_time_end_mins > t.critical_temp_time_start_mins {
+                println!(
+                    "      - NVMe Critical Composite Temp Time increased by {} min ({} -> {} min).",
+                    t.critical_temp_time_end_mins - t.critical_temp_time_start_mins,
+                    t.critical_temp_time_start_mins,
+                    t.critical_temp_time_end_mins
+                );
+            }
+        }
     }
     println!("════════════════════════════════════════════════════════════════════════\n");
 }

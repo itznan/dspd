@@ -59,4 +59,8 @@ pub enum DriveError {
     OpenFailed(char, windows::core::Error),
     #[error("Drive {0}: IOCTL query failed ({1})")]
     IoctlFailed(char, windows::core::Error),
+    #[error("Drive {0}: NVMe SMART query unsupported ({1})")]
+    NvmeUnsupported(char, String),
+    #[error("Invalid NVMe SMART log length: {0} bytes (expected at least 512)")]
+    InvalidNvmeLog(usize),
 }

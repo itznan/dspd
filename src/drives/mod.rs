@@ -3,10 +3,18 @@
 
 //! Physical drive discovery and storage properties querying using Win32 API and IOCTL.
 
+pub mod nvme;
 pub mod query;
 pub mod space;
 pub mod types;
 
+pub use nvme::{
+    open_telemetry_handle, parse_nvme_smart_log, query_nvme_smart, NvmeSmartData,
+    NvmeThermalMonitor, StorageProtocolDataDescriptor, StorageProtocolSpecificData,
+    ThermalTelemetry, NVME_DATA_TYPE_LOG_PAGE, NVME_LOG_PAGE_SMART, NVME_SMART_LOG_SIZE,
+    PROPERTY_STANDARD_QUERY, PROTOCOL_TYPE_NVME, STORAGE_ADAPTER_PROTOCOL_SPECIFIC_PROPERTY,
+    STORAGE_DEVICE_PROTOCOL_SPECIFIC_PROPERTY, THERMAL_THROTTLE_TEMP_THRESHOLD_C,
+};
 pub use space::get_disk_space;
 pub use types::{BusType, DriveError, DriveInfo, MediaType};
 
