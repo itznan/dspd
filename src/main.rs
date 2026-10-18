@@ -9,11 +9,11 @@ use clap::Parser;
 use dspd::cli::{Args, VERSION};
 use dspd::drives;
 use dspd::engine::profile::{Profile, ALL_PROFILES};
-use dspd::parse_size;
 use dspd::report::get_desktop_dir;
-use dspd::runner::benchmark_drive;
+use dspd::runner::{benchmark_drive, benchmark_drive_sustained};
 use dspd::signal::{is_cancelled, register_ctrl_handler};
 use dspd::ui::{print_validation_commands, prompt_ssd_wear};
+use dspd::{parse_size, parse_sustained_size};
 
 fn main() -> Result<()> {
     println!("dspd v{} by itznan (github.com/itznan/dspd)\n", VERSION);
@@ -25,9 +25,6 @@ fn main() -> Result<()> {
         print_validation_commands(args.duration, args.warmup);
         return Ok(());
     }
-
-    let test_size = parse_size(&args.size)?;
-    let test_size_gib = test_size as f64 / (1024.0 * 1024.0 * 1024.0);
 
     // Discover eligible drives
     let mut available_drives = drives::discover(args.include_removable);
@@ -46,6 +43,42 @@ fn main() -> Result<()> {
             anyhow::bail!("None of the specified drive letters were found.");
         }
     }
+
+    let output_directory = args.output_dir.clone().unwrap_or_else(get_desktop_dir);
+    std::fs::create_dir_all(&output_directory).with_context(|| {
+        format!(
+            "Failed to create output directory '{}'",
+            output_directory.display()
+        )
+    })?;
+
+    // Sustained write profiling mode (--sustained <SIZE_GIB> or --sustained-duration <SECS>)
+    if args.sustained.is_some() || args.sustained_duration.is_some() {
+        let sustained_size = if let Some(ref s) = args.sustained {
+            parse_sustained_size(s)?
+        } else {
+            parse_size(&args.size)?
+        };
+        let sustained_gib = sustained_size as f64 / (1024.0 * 1024.0 * 1024.0);
+
+        if !args.yes && !prompt_ssd_wear(sustained_gib, 1, 1)? {
+            println!("Benchmark aborted by user.");
+            return Ok(());
+        }
+        println!();
+
+        for drive in &available_drives {
+            if is_cancelled() {
+                break;
+            }
+            benchmark_drive_sustained(drive, &args, &output_directory)?;
+        }
+
+        return Ok(());
+    }
+
+    let test_size = parse_size(&args.size)?;
+    let test_size_gib = test_size as f64 / (1024.0 * 1024.0 * 1024.0);
 
     // Select profiles
     let profiles_to_run: Vec<Profile> = if let Some(ref prof_name) = args.profile {
@@ -69,14 +102,6 @@ fn main() -> Result<()> {
         return Ok(());
     }
     println!();
-
-    let output_directory = args.output_dir.clone().unwrap_or_else(get_desktop_dir);
-    std::fs::create_dir_all(&output_directory).with_context(|| {
-        format!(
-            "Failed to create output directory '{}'",
-            output_directory.display()
-        )
-    })?;
 
     // Benchmark each drive
     for drive in &available_drives {

@@ -58,4 +58,12 @@ pub struct Args {
     /// Print benchmark profile specifications and test parameters
     #[arg(long)]
     pub validate: bool,
+
+    /// Sustained write profiling mode to measure pseudo-SLC cache exhaustion (e.g. 50 or 50GiB)
+    #[arg(long, value_name = "SIZE_GIB")]
+    pub sustained: Option<String>,
+
+    /// Sustained write test maximum duration in seconds
+    #[arg(long, value_name = "SECS")]
+    pub sustained_duration: Option<u64>,
 }

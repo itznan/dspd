@@ -8,6 +8,7 @@ use std::io::{stdin, stdout, Write};
 
 use crate::drives::{DriveInfo, ThermalTelemetry};
 use crate::engine::profile::ALL_PROFILES;
+use crate::engine::sustained::SustainedAnalysis;
 use crate::report::ReportRow;
 
 const SUMMARY_PROFILES: [&str; 4] = ["SEQ1M Q8T1", "SEQ1M Q1T1", "RND4K Q32T1", "RND4K Q1T1"];
@@ -136,6 +137,87 @@ pub fn print_summary_tables(
         );
         println!(
             "  SMART Health   │ Spare: {}% │ Life Used: {}% │ Crit Temp Time: {} min",
+            t.available_spare_pct, t.percentage_used_pct, t.critical_temp_time_end_mins
+        );
+        if t.throttled {
+            println!("────────────────────────────────────────────────────────────────────────");
+            println!(
+                "  [!] WARNING: Thermal throttling likely impacted the results!"
+            );
+            if t.peak_temp_c >= 70 {
+                println!(
+                    "      - Drive temperature reached {}°C (crossed 70°C threshold).",
+                    t.peak_temp_c
+                );
+            }
+            if t.critical_temp_time_end_mins > t.critical_temp_time_start_mins {
+                println!(
+                    "      - NVMe Critical Composite Temp Time increased by {} min ({} -> {} min).",
+                    t.critical_temp_time_end_mins - t.critical_temp_time_start_mins,
+                    t.critical_temp_time_start_mins,
+                    t.critical_temp_time_end_mins
+                );
+            }
+        }
+    }
+    println!("════════════════════════════════════════════════════════════════════════\n");
+}
+
+/// Print formatted sustained write profile summary including throughput curve sparkline,
+/// SLC cliff point, sustained speed, and thermal trajectory.
+pub fn print_sustained_summary(
+    drive: &DriveInfo,
+    analysis: &SustainedAnalysis,
+    thermal: Option<&ThermalTelemetry>,
+) {
+    println!("════════════════════════════════════════════════════════════════════════");
+    println!(
+        "  dspd Sustained Write Profile — Drive {}: ({})",
+        drive.letter, drive.model
+    );
+    println!("────────────────────────────────────────────────────────────────────────");
+    println!(
+        "  Throughput Curve ({:.1} GiB written over {}s):",
+        analysis.total_gib_written, analysis.duration_secs
+    );
+    println!("  {}", analysis.sparkline);
+    println!("────────────────────────────────────────────────────────────────────────");
+    println!(
+        "  Burst Write Speed     : {:>8.1} MB/s (initial pseudo-SLC plateau)",
+        analysis.burst_speed_mb_s
+    );
+    if let (Some(cliff_gib), Some(drop_pct)) = (analysis.slc_cliff_gib, analysis.cliff_drop_percent) {
+        println!(
+            "  SLC Cache Cliff Point : {:>8.1} GiB (drop of {:.1}% after {:.1} GiB written)",
+            cliff_gib, drop_pct, cliff_gib
+        );
+    } else {
+        println!(
+            "  SLC Cache Cliff Point : Not reached (>= {:.1} GiB without >= 35% drop)",
+            analysis.total_gib_written
+        );
+    }
+    if let Some(sustained_speed) = analysis.sustained_speed_mb_s {
+        println!(
+            "  Sustained Write Speed : {:>8.1} MB/s (steady-state direct-to-TLC/QLC)",
+            sustained_speed
+        );
+    } else {
+        println!("  Sustained Write Speed :      N/A (drive remained in SLC cache)");
+    }
+    println!(
+        "  Throughput Stability  : CV {:>5.1}% (peak: {:.1} MB/s, min: {:.1} MB/s)",
+        analysis.cv_percent, analysis.peak_speed_mb_s, analysis.min_speed_mb_s
+    );
+
+    if let Some(t) = thermal {
+        println!("────────────────────────────────────────────────────────────────────────");
+        println!(
+            "  Thermal Trajectory    : Temp: {}°C -> {}°C peak (end: {}°C)",
+            t.start_temp_c, t.peak_temp_c, t.end_temp_c
+        );
+        println!(
+            "  SMART Health          : Spare: {}% │ Life Used: {}% │ Crit Temp Time: {} min",
             t.available_spare_pct, t.percentage_used_pct, t.critical_temp_time_end_mins
         );
         if t.throttled {

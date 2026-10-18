@@ -18,12 +18,14 @@ use crate::drives::{DriveInfo, NvmeThermalMonitor};
 use crate::engine::iocp::IocpEngine;
 use crate::engine::profile::Profile;
 use crate::engine::stats::{average_passes, PassResult};
+use crate::engine::sustained::{analyze_sustained_buckets, run_sustained_write_iocp};
 use crate::file::{open_benchmark_file, prepare_test_file, resolve_test_file_path, FileGuard};
-use crate::report::csv::write_csv;
-use crate::report::json::{to_json_string, write_json};
+use crate::parse_sustained_size;
+use crate::report::csv::{write_csv, write_sustained_csv};
+use crate::report::json::{to_json_string, write_json, write_sustained_json};
 use crate::report::ReportRow;
 use crate::signal::{is_cancelled, CANCELLED};
-use crate::ui::{format_latency, format_latency_u64, print_summary_tables};
+use crate::ui::{format_latency, format_latency_u64, print_summary_tables, print_sustained_summary};
 
 /// Benchmark a single drive across all requested profiles.
 pub fn benchmark_drive(
@@ -245,4 +247,138 @@ pub fn run_test_passes(
     }
 
     average_passes(&pass_metrics)
+}
+
+/// Execute sustained sequential write profiling pass on a drive.
+pub fn benchmark_drive_sustained(
+    drive: &DriveInfo,
+    args: &Args,
+    output_dir: &Path,
+) -> Result<()> {
+    if is_cancelled() {
+        return Ok(());
+    }
+
+    // Determine target size
+    let target_size = if let Some(ref s) = args.sustained {
+        parse_sustained_size(s)?
+    } else if args.sustained_duration.is_some() {
+        crate::parse_size(&args.size)?
+    } else {
+        // Default 64 GiB if unspecified
+        64 * 1024 * 1024 * 1024
+    };
+
+    let test_size_gib = target_size as f64 / (1024.0 * 1024.0 * 1024.0);
+
+    // Max duration: user specified or automatic based on minimum 50 MB/s speed (clamped 180s..7200s)
+    let max_duration_secs = args
+        .sustained_duration
+        .unwrap_or_else(|| (target_size / (50 * 1024 * 1024)).clamp(180, 7200));
+
+    println!("────────────────────────────────────────────────────────────────────────");
+    println!(
+        "Drive {}: {} [{}] — Sustained Write Profiler",
+        drive.letter, drive.model, drive.media_type
+    );
+    println!(
+        "Bus Type: {} | Target Size: {:.1} GiB | Max Duration: {}s",
+        drive.bus_type, test_size_gib, max_duration_secs
+    );
+    println!("────────────────────────────────────────────────────────────────────────");
+
+    // Verify free space requirement (target size + 10%)
+    let min_required = (target_size as f64 * 1.1) as u64;
+    if drive.free < min_required {
+        eprintln!(
+            "  [WARN] Drive {}: has insufficient free space ({:.2} GiB free, need {:.2} GiB). Skipping drive.\n",
+            drive.letter,
+            drive.free as f64 / (1024.0 * 1024.0 * 1024.0),
+            min_required as f64 / (1024.0 * 1024.0 * 1024.0)
+        );
+        return Ok(());
+    }
+
+    let test_file_path = resolve_test_file_path(drive.letter);
+    let _file_guard = FileGuard {
+        path: test_file_path.clone(),
+    };
+
+    // Start background NVMe thermal telemetry polling if supported
+    let thermal_monitor = NvmeThermalMonitor::start(drive.letter);
+
+    println!(
+        "  Allocating test file: {} ({:.1} GiB)...",
+        test_file_path.display(),
+        test_size_gib
+    );
+    prepare_test_file(&test_file_path, target_size)?;
+
+    let file_handle = open_benchmark_file(&test_file_path)?;
+
+    let pb = ProgressBar::new(target_size);
+    pb.set_style(
+        ProgressStyle::default_bar()
+            .template("  Sustained Write [{bar:25.green/black}] {bytes}/{total_bytes} ({bytes_per_sec}, ETA {eta})")?
+            .progress_chars("=>-"),
+    );
+
+    let pb_clone = pb.clone();
+    let buckets = run_sustained_write_iocp(
+        file_handle,
+        target_size,
+        max_duration_secs,
+        &CANCELLED,
+        move |cum_bytes, _mb_s| {
+            pb_clone.set_position(cum_bytes);
+        },
+    )?;
+
+    pb.finish_and_clear();
+
+    // Close test file handle
+    unsafe {
+        let _ = CloseHandle(file_handle);
+    }
+
+    // Stop background thermal monitor and aggregate results
+    let thermal_report = thermal_monitor.map(|m| m.stop());
+
+    // Analyze time-series telemetry buckets
+    let analysis = analyze_sustained_buckets(&buckets);
+
+    // Print summary and Unicode sparkline to console
+    print_sustained_summary(drive, &analysis, thermal_report.as_ref());
+
+    // Export reports
+    let timestamp = Local::now().format("%Y%m%d_%H%M%S");
+    let csv_path = output_dir.join(format!(
+        "dspd_sustained_{}_{}.csv",
+        drive.letter, timestamp
+    ));
+    write_sustained_csv(&csv_path, &buckets)?;
+    println!("  CSV Time-Series : {}", csv_path.display());
+
+    let json_path = output_dir.join(format!(
+        "dspd_sustained_{}_{}.json",
+        drive.letter, timestamp
+    ));
+    let json_report = write_sustained_json(
+        &json_path,
+        drive,
+        target_size,
+        max_duration_secs,
+        &analysis,
+        &buckets,
+        thermal_report.clone(),
+    )?;
+    println!("  JSON Report     : {}", json_path.display());
+
+    if args.json {
+        println!("\n─── JSON Output ───");
+        println!("{}", to_json_string(&json_report)?);
+    }
+    println!();
+
+    Ok(())
 }

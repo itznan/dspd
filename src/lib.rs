@@ -45,3 +45,23 @@ pub fn parse_size(input: &str) -> Result<u64> {
     let aligned = (int_bytes + 4095) & !4095;
     Ok(aligned)
 }
+
+/// Parse sustained size argument, supporting both pure GiB numbers (e.g. "50")
+/// and human-readable size strings (e.g. "50GiB", "64GB").
+pub fn parse_sustained_size(input: &str) -> Result<u64> {
+    let s = input.trim();
+    if s.is_empty() {
+        anyhow::bail!("Sustained size argument cannot be empty");
+    }
+
+    if s.chars().all(|c| c.is_ascii_digit() || c == '.') {
+        let gib: f64 = s
+            .parse()
+            .with_context(|| format!("Invalid numeric value in sustained size: '{}'", s))?;
+        let bytes = (gib * 1024.0 * 1024.0 * 1024.0) as u64;
+        let aligned = (bytes + 4095) & !4095;
+        Ok(aligned)
+    } else {
+        parse_size(s)
+    }
+}
