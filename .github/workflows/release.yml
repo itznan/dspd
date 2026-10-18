@@ -128,15 +128,21 @@ jobs:
           "${hash}  $(Split-Path $setupFile -Leaf)" | Out-File -Encoding ascii "${setupFile}.sha256"
           Write-Host "Created Windows Installer: $setupFile (SHA256: $hash)"
 
+      - name: Stage build artifacts
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item "dspd-*.zip" -Destination dist/
+          Copy-Item "dspd-*.zip.sha256" -Destination dist/
+          Copy-Item "installer/Output/*.exe" -Destination dist/
+          Copy-Item "installer/Output/*.sha256" -Destination dist/
+          Get-ChildItem -Path dist | Format-Table Name, Length
+
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
           name: release-assets-${{ matrix.target }}
-          path: |
-            dspd-*.zip
-            dspd-*.zip.sha256
-            installer/Output/*.exe
-            installer/Output/*.sha256
+          path: dist/*
           if-no-files-found: error
 
   publish:
@@ -157,11 +163,11 @@ jobs:
       - name: Verify release artifacts
         shell: pwsh
         run: |
-          Get-ChildItem -Path release-assets -Recurse | Select-Object Name, Length
-          $count = (Get-ChildItem -Path release-assets -File).Count
-          Write-Host "Total assets downloaded: $count"
-          if ($count -lt 8) {
-            throw "Expected at least 8 release assets (2 zips, 2 zip sha256s, 2 exes, 2 exe sha256s), found $count"
+          Get-ChildItem -Path release-assets | Format-Table Name, Length
+          $files = Get-ChildItem -Path release-assets -File
+          Write-Host "Total assets downloaded: $($files.Count)"
+          if ($files.Count -lt 8) {
+            throw "Expected at least 8 release assets (2 zips, 2 zip sha256s, 2 exes, 2 exe sha256s), found $($files.Count)"
           }
 
       - name: Publish GitHub Release
