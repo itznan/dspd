@@ -111,6 +111,23 @@ pub fn print_summary_tables(
         }
     }
 
+    if rows.iter().any(|r| r.cpu_util_pct.is_some()) {
+        println!("  ────────────────┼───────────┼─────────────┼───────────────┼────────────────");
+        println!("  CPU Efficiency  │ Direction │    CPU Util │     Cycles/IO │     IOPS / Core");
+        println!("  ────────────────┼───────────┼─────────────┼───────────────┼────────────────");
+        for row in rows {
+            if let (Some(util), Some(cycles), Some(ipc)) =
+                (row.cpu_util_pct, row.cycles_per_io, row.iops_per_core)
+            {
+                println!(
+                    "  {:<15} │ {:<9} │ {:>10.1}% │ {:>13} │ {:>15.0}",
+                    row.profile, row.direction, util, cycles, ipc
+                );
+            }
+        }
+        println!("──────────────────────────────────────────────────────────────────────────────────────────────────────────");
+    }
+
     if let Some(t) = thermal {
         println!(
             "  Thermal         │ Temp: {}°C -> {}°C peak (end: {}°C)",

@@ -20,6 +20,12 @@ pub struct ReportRow {
     pub p99_lat_us: u64,
     #[serde(default)]
     pub p999_lat_us: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cpu_util_pct: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cycles_per_io: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub iops_per_core: Option<f64>,
 }
 
 /// Retrieve the current user's Desktop folder path using Win32 Shell API with environment fallback.

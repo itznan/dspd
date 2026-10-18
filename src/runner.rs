@@ -15,7 +15,9 @@ use windows::Win32::Foundation::CloseHandle;
 
 use crate::cli::Args;
 use crate::drives::{DriveInfo, NvmeThermalMonitor};
+use crate::engine::cpu::{apply_thread_affinity, parse_affinity_mask};
 use crate::engine::iocp::IocpEngine;
+use crate::engine::ioring::IoRingEngine;
 use crate::engine::profile::{Profile, RwMix};
 use crate::engine::stats::{average_passes, PassResult};
 use crate::engine::sustained::{analyze_sustained_buckets, run_sustained_write_iocp};
@@ -76,9 +78,38 @@ pub fn benchmark_drive(
         test_size_gib
     );
     println!(
-        "  Passes   : {} pass(es) x {}s (warmup: {}s)\n",
+        "  Passes   : {} pass(es) x {}s (warmup: {}s)",
         args.passes, args.duration, args.warmup
     );
+
+    // Apply thread affinity and elevate priority before warmup
+    if let Some(ref aff) = args.affinity {
+        match parse_affinity_mask(aff) {
+            Ok(mask) => {
+                if let Err(e) = apply_thread_affinity(mask) {
+                    eprintln!("  [WARN] Failed to apply thread affinity: {}", e);
+                } else {
+                    println!("  Thread Affinity: Mask 0x{:X} (Priority: HIGHEST)", mask);
+                }
+            }
+            Err(e) => {
+                eprintln!("  [WARN] Invalid affinity specification '{}': {}", aff, e);
+            }
+        }
+    }
+
+    // Report and validate storage engine
+    let requested_ioring = args.engine.eq_ignore_ascii_case("ioring");
+    if requested_ioring {
+        if IoRingEngine::is_available() {
+            println!("  Engine   : Windows 11 IoRing (pre-registered handles & buffers)\n");
+        } else {
+            println!("  [WARN] Windows 11 IoRing is not available on this OS build. Falling back to IOCP.");
+            println!("  Engine   : IOCP (I/O Completion Ports)\n");
+        }
+    } else {
+        println!("  Engine   : IOCP (I/O Completion Ports)\n");
+    }
 
     let _file_guard = FileGuard {
         path: test_file_path.clone(),
@@ -133,6 +164,12 @@ pub fn benchmark_drive(
                     format_latency(mixed_avg.avg_flush_us())
                 );
             }
+            if let Some(ref cpu) = mixed_avg.cpu {
+                println!(
+                    "  [{}] CPU Efficiency: {:>5.1}% CPU Util | {:>6} Cycles/IO | {:>8.0} IOPS/Core",
+                    profile.name, cpu.cpu_util_pct, cpu.cycles_per_io, cpu.iops_per_core
+                );
+            }
             println!();
 
             rows.push(ReportRow {
@@ -144,6 +181,9 @@ pub fn benchmark_drive(
                 avg_lat_us: mixed_avg.read_avg_us(),
                 p99_lat_us: mixed_avg.read_p99_us(),
                 p999_lat_us: mixed_avg.read_p999_us(),
+                cpu_util_pct: mixed_avg.cpu.as_ref().map(|c| c.cpu_util_pct),
+                cycles_per_io: mixed_avg.cpu.as_ref().map(|c| c.cycles_per_io),
+                iops_per_core: mixed_avg.cpu.as_ref().map(|c| c.iops_per_core),
             });
 
             rows.push(ReportRow {
@@ -155,6 +195,9 @@ pub fn benchmark_drive(
                 avg_lat_us: mixed_avg.write_avg_us(),
                 p99_lat_us: mixed_avg.write_p99_us(),
                 p999_lat_us: mixed_avg.write_p999_us(),
+                cpu_util_pct: mixed_avg.cpu.as_ref().map(|c| c.cpu_util_pct),
+                cycles_per_io: mixed_avg.cpu.as_ref().map(|c| c.cycles_per_io),
+                iops_per_core: mixed_avg.cpu.as_ref().map(|c| c.iops_per_core),
             });
 
             if let Some(ref monitor) = thermal_monitor {
@@ -172,6 +215,12 @@ pub fn benchmark_drive(
                 format_latency_u64(read_avg.p99_latency_us()),
                 format_latency_u64(read_avg.p999_latency_us())
             );
+            if let Some(ref cpu) = read_avg.cpu {
+                println!(
+                    "  [{}] CPU Efficiency: {:>5.1}% CPU Util | {:>6} Cycles/IO | {:>8.0} IOPS/Core",
+                    profile.name, cpu.cpu_util_pct, cpu.cycles_per_io, cpu.iops_per_core
+                );
+            }
             if profile.is_llm_stream {
                 let mb_s = read_avg.throughput_mb_s();
                 let est_load_secs = if mb_s > 0.0 {
@@ -195,6 +244,9 @@ pub fn benchmark_drive(
                 avg_lat_us: read_avg.avg_latency_us(),
                 p99_lat_us: read_avg.p99_latency_us(),
                 p999_lat_us: read_avg.p999_latency_us(),
+                cpu_util_pct: read_avg.cpu.as_ref().map(|c| c.cpu_util_pct),
+                cycles_per_io: read_avg.cpu.as_ref().map(|c| c.cycles_per_io),
+                iops_per_core: read_avg.cpu.as_ref().map(|c| c.iops_per_core),
             });
 
             if let Some(ref monitor) = thermal_monitor {
@@ -212,6 +264,12 @@ pub fn benchmark_drive(
                 format_latency_u64(read_avg.p99_latency_us()),
                 format_latency_u64(read_avg.p999_latency_us())
             );
+            if let Some(ref cpu) = read_avg.cpu {
+                println!(
+                    "  [{}] CPU (Read)  : {:>5.1}% CPU Util | {:>6} Cycles/IO | {:>8.0} IOPS/Core",
+                    profile.name, cpu.cpu_util_pct, cpu.cycles_per_io, cpu.iops_per_core
+                );
+            }
             rows.push(ReportRow {
                 profile: profile.name.to_string(),
                 direction: "Read".to_string(),
@@ -221,6 +279,9 @@ pub fn benchmark_drive(
                 avg_lat_us: read_avg.avg_latency_us(),
                 p99_lat_us: read_avg.p99_latency_us(),
                 p999_lat_us: read_avg.p999_latency_us(),
+                cpu_util_pct: read_avg.cpu.as_ref().map(|c| c.cpu_util_pct),
+                cycles_per_io: read_avg.cpu.as_ref().map(|c| c.cycles_per_io),
+                iops_per_core: read_avg.cpu.as_ref().map(|c| c.iops_per_core),
             });
 
             // Sample telemetry between benchmark stages
@@ -242,6 +303,12 @@ pub fn benchmark_drive(
                 format_latency_u64(write_avg.p99_latency_us()),
                 format_latency_u64(write_avg.p999_latency_us())
             );
+            if let Some(ref cpu) = write_avg.cpu {
+                println!(
+                    "  [{}] CPU (Write) : {:>5.1}% CPU Util | {:>6} Cycles/IO | {:>8.0} IOPS/Core",
+                    profile.name, cpu.cpu_util_pct, cpu.cycles_per_io, cpu.iops_per_core
+                );
+            }
             rows.push(ReportRow {
                 profile: profile.name.to_string(),
                 direction: "Write".to_string(),
@@ -251,6 +318,9 @@ pub fn benchmark_drive(
                 avg_lat_us: write_avg.avg_latency_us(),
                 p99_lat_us: write_avg.p99_latency_us(),
                 p999_lat_us: write_avg.p999_latency_us(),
+                cpu_util_pct: write_avg.cpu.as_ref().map(|c| c.cpu_util_pct),
+                cycles_per_io: write_avg.cpu.as_ref().map(|c| c.cycles_per_io),
+                iops_per_core: write_avg.cpu.as_ref().map(|c| c.iops_per_core),
             });
             println!();
 
@@ -330,7 +400,6 @@ pub fn run_test_passes(
         pb.set_prefix(prefix);
 
         let file_handle = open_benchmark_file(test_file_path)?;
-        let mut engine = IocpEngine::new(file_handle, test_size, profile)?;
 
         let cancel_flag = Arc::new(AtomicBool::new(false));
         let cancel_thread = cancel_flag.clone();
@@ -347,13 +416,26 @@ pub fn run_test_passes(
             }
         });
 
-        let pass_res = engine.run_pass(
-            args.duration + args.warmup,
-            args.warmup,
-            is_write,
-            rw_mix,
-            &CANCELLED,
-        )?;
+        let use_ioring = args.engine.eq_ignore_ascii_case("ioring") && IoRingEngine::is_available();
+        let pass_res = if use_ioring {
+            let mut engine = IoRingEngine::new(file_handle, test_size, profile)?;
+            engine.run_pass(
+                args.duration + args.warmup,
+                args.warmup,
+                is_write,
+                rw_mix,
+                &CANCELLED,
+            )?
+        } else {
+            let mut engine = IocpEngine::new(file_handle, test_size, profile)?;
+            engine.run_pass(
+                args.duration + args.warmup,
+                args.warmup,
+                is_write,
+                rw_mix,
+                &CANCELLED,
+            )?
+        };
 
         cancel_flag.store(true, Ordering::Relaxed);
         let _ = ticker.join();
@@ -402,6 +484,22 @@ pub fn benchmark_drive_sustained(drive: &DriveInfo, args: &Args, output_dir: &Pa
         "Bus Type: {} | Target Size: {:.1} GiB | Max Duration: {}s",
         drive.bus_type, test_size_gib, max_duration_secs
     );
+
+    // Apply thread affinity and elevate priority before warmup
+    if let Some(ref aff) = args.affinity {
+        match parse_affinity_mask(aff) {
+            Ok(mask) => {
+                if let Err(e) = apply_thread_affinity(mask) {
+                    eprintln!("  [WARN] Failed to apply thread affinity: {}", e);
+                } else {
+                    println!("  Thread Affinity: Mask 0x{:X} (Priority: HIGHEST)", mask);
+                }
+            }
+            Err(e) => {
+                eprintln!("  [WARN] Invalid affinity specification '{}': {}", aff, e);
+            }
+        }
+    }
     println!("────────────────────────────────────────────────────────────────────────");
 
     // Verify free space requirement (target size + 10%)

@@ -31,8 +31,9 @@ use super::qpc::{qpc_elapsed_us, qpc_now};
 use super::stats::PassResult;
 
 /// Operation type for an I/O request.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum IoOp {
+    #[default]
     Read,
     Write,
 }
@@ -164,6 +165,8 @@ impl IocpEngine {
         let mut measuring = false;
         let mut measure_start = Instant::now();
 
+        let mut cpu_before = super::cpu::CpuSnapshot::default();
+
         // 1. Prime the queue: dispatch the initial batch of N concurrent requests.
         for slot in 0..qd {
             self.issue_slot(
@@ -195,6 +198,7 @@ impl IocpEngine {
             if !measuring && elapsed >= warmup_end {
                 measuring = true;
                 measure_start = Instant::now();
+                cpu_before = super::cpu::CpuSnapshot::take();
             }
 
             let timeout_ms = {
@@ -295,7 +299,18 @@ impl IocpEngine {
             }
         }
 
-        result.elapsed_ns = measure_start.elapsed().as_nanos() as u64;
+        if measuring {
+            let cpu_after = super::cpu::CpuSnapshot::take();
+            result.elapsed_ns = measure_start.elapsed().as_nanos() as u64;
+            let total_ios = result.read_ios + result.write_ios;
+            result.cpu = Some(super::cpu::CpuMetrics::compute(
+                &cpu_before,
+                &cpu_after,
+                total_ios,
+                result.elapsed_ns,
+            ));
+        }
+
         Ok(result)
     }
 

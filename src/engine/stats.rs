@@ -31,6 +31,8 @@ pub struct PassResult {
     pub flush_count: u64,
     /// Total duration of all FlushFileBuffers calls in microseconds.
     pub flush_total_us: u64,
+    /// CPU efficiency telemetry for the pass.
+    pub cpu: Option<super::cpu::CpuMetrics>,
 }
 
 impl PassResult {
@@ -48,6 +50,7 @@ impl PassResult {
             hist: Histogram::<u64>::new_with_bounds(1, 3_600_000_000, 3)?,
             flush_count: 0,
             flush_total_us: 0,
+            cpu: None,
         })
     }
 
@@ -199,6 +202,11 @@ pub fn average_passes(results: &[PassResult]) -> Result<PassResult> {
         return Ok(averaged);
     }
 
+    let mut total_cpu_util = 0.0;
+    let mut total_cycles_per_io = 0u64;
+    let mut total_iops_per_core = 0.0;
+    let mut cpu_count = 0u64;
+
     for r in results {
         averaged.elapsed_ns += r.elapsed_ns / n;
         averaged.bytes_xfer += r.bytes_xfer / n;
@@ -211,6 +219,21 @@ pub fn average_passes(results: &[PassResult]) -> Result<PassResult> {
         averaged.read_hist.add(&r.read_hist)?;
         averaged.write_hist.add(&r.write_hist)?;
         averaged.hist.add(&r.hist)?;
+
+        if let Some(c) = r.cpu {
+            total_cpu_util += c.cpu_util_pct;
+            total_cycles_per_io += c.cycles_per_io;
+            total_iops_per_core += c.iops_per_core;
+            cpu_count += 1;
+        }
+    }
+
+    if cpu_count > 0 {
+        averaged.cpu = Some(super::cpu::CpuMetrics {
+            cpu_util_pct: total_cpu_util / (cpu_count as f64),
+            cycles_per_io: total_cycles_per_io / cpu_count,
+            iops_per_core: total_iops_per_core / (cpu_count as f64),
+        });
     }
 
     Ok(averaged)

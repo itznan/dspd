@@ -2,7 +2,9 @@
 // Copyright (c) 2026 itznan
 
 pub mod buffers;
+pub mod cpu;
 pub mod iocp;
+pub mod ioring;
 pub mod profile;
 pub mod qpc;
 pub mod stats;

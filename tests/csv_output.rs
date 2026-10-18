@@ -14,6 +14,9 @@ fn test_csv_serialization_roundtrip() {
         avg_lat_us: 1170.5,
         p99_lat_us: 2400,
         p999_lat_us: 3200,
+        cpu_util_pct: Some(12.5),
+        cycles_per_io: Some(4500),
+        iops_per_core: Some(54320.0),
     };
 
     let temp_file = std::env::temp_dir().join("dspd_test_roundtrip.csv");
@@ -29,6 +32,9 @@ fn test_csv_serialization_roundtrip() {
     assert_eq!(records[0].p50_lat_us, 1120);
     assert_eq!(records[0].p99_lat_us, 2400);
     assert_eq!(records[0].p999_lat_us, 3200);
+    assert_eq!(records[0].cpu_util_pct, Some(12.5));
+    assert_eq!(records[0].cycles_per_io, Some(4500));
+    assert_eq!(records[0].iops_per_core, Some(54320.0));
 
     let _ = std::fs::remove_file(temp_file);
 }

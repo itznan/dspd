@@ -26,6 +26,9 @@ fn test_json_serialization_and_roundtrip() {
             avg_lat_us: 1150.2,
             p99_lat_us: 1420,
             p999_lat_us: 1800,
+            cpu_util_pct: Some(15.2),
+            cycles_per_io: Some(3200),
+            iops_per_core: Some(89000.0),
         },
         ReportRow {
             profile: "SEQ1M Q8T1".to_string(),
@@ -36,6 +39,9 @@ fn test_json_serialization_and_roundtrip() {
             avg_lat_us: 1210.0,
             p99_lat_us: 1530,
             p999_lat_us: 1950,
+            cpu_util_pct: Some(18.4),
+            cycles_per_io: Some(3800),
+            iops_per_core: Some(71000.0),
         },
         ReportRow {
             profile: "RND4K Q32T1".to_string(),
@@ -46,6 +52,9 @@ fn test_json_serialization_and_roundtrip() {
             avg_lat_us: 285.5,
             p99_lat_us: 420,
             p999_lat_us: 580,
+            cpu_util_pct: None,
+            cycles_per_io: None,
+            iops_per_core: None,
         },
     ];
 
@@ -98,6 +107,9 @@ fn test_json_serialization_with_thermal_telemetry() {
         avg_lat_us: 1150.2,
         p99_lat_us: 1420,
         p999_lat_us: 1800,
+        cpu_util_pct: None,
+        cycles_per_io: None,
+        iops_per_core: None,
     }];
 
     let thermal = ThermalTelemetry {

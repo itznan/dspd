@@ -70,4 +70,12 @@ pub struct Args {
     /// Mixed Read/Write workload ratio (e.g. 70:30)
     #[arg(long, value_name = "READ:WRITE")]
     pub rw_mix: Option<String>,
+
+    /// Storage engine backend: "iocp" (default) or "ioring" (Windows 11)
+    #[arg(long, default_value = "iocp", value_name = "ENGINE")]
+    pub engine: String,
+
+    /// CPU affinity mask (hex e.g. 0xF) or comma-separated core indices / ranges (e.g. 0,2,4 or 0-3)
+    #[arg(long, value_name = "MASK_OR_LIST")]
+    pub affinity: Option<String>,
 }
