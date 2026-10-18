@@ -2,8 +2,11 @@ name: Release
 
 on:
   push:
+    branches:
+      - main
     tags:
       - "v*"
+  workflow_dispatch:
 
 env:
   CARGO_TERM_COLOR: always
@@ -12,8 +15,47 @@ permissions:
   contents: write
 
 jobs:
+  prepare:
+    name: Prepare Release Version
+    runs-on: windows-latest
+    outputs:
+      release_tag: ${{ steps.vars.outputs.release_tag }}
+      version: ${{ steps.vars.outputs.version }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Determine Release Tag and Version
+        id: vars
+        shell: pwsh
+        run: |
+          $cargoToml = Get-Content Cargo.toml -Raw
+          if ($cargoToml -match '(?m)^version\s*=\s*"([^"]+)"') {
+            $baseVer = $matches[1]
+          } else {
+            $baseVer = "0.2.0"
+          }
+
+          if ($env:GITHUB_REF_TYPE -eq "tag") {
+            $releaseTag = $env:GITHUB_REF_NAME
+            $ver = $releaseTag.TrimStart('v')
+          } else {
+            # On branch push (e.g. main) or manual workflow_dispatch
+            $runNum = $env:GITHUB_RUN_NUMBER
+            $releaseTag = "v${baseVer}.${runNum}"
+            $ver = "${baseVer}.${runNum}"
+          }
+
+          Write-Host "Base Version: $baseVer"
+          Write-Host "Computed Release Tag: $releaseTag"
+          Write-Host "Computed Version: $ver"
+
+          "release_tag=$releaseTag" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "version=$ver" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
   build:
     name: Build ${{ matrix.target }}
+    needs: prepare
     runs-on: windows-latest
     strategy:
       fail-fast: false
@@ -49,9 +91,9 @@ jobs:
       - name: Package artifact & generate SHA256 checksum
         shell: pwsh
         run: |
-          $ver    = "${{ github.ref_name }}"
+          $tag    = "${{ needs.prepare.outputs.release_tag }}"
           $target = "${{ matrix.target }}"
-          $dir    = "dspd-${ver}-${target}"
+          $dir    = "dspd-${tag}-${target}"
           New-Item -ItemType Directory -Force -Path $dir | Out-Null
           Copy-Item "target/${target}/release/dspd.exe" -Destination $dir
           Copy-Item "dspd.ps1", "README.md", "LICENSE" -Destination $dir
@@ -64,7 +106,7 @@ jobs:
       - name: Build Windows Setup Installer
         shell: pwsh
         run: |
-          $ver = "${{ github.ref_name }}".TrimStart('v')
+          $ver = "${{ needs.prepare.outputs.version }}"
           $target = "${{ matrix.target }}"
           $arch = if ($target -like "aarch64*") { "arm64" } else { "x86_64" }
           $archMode = if ($target -like "aarch64*") { "arm64" } else { "x64compatible" }
@@ -78,20 +120,58 @@ jobs:
             "/DArchitectureMode=${archMode}" `
             "/DSourceExePath=..\target\${target}\release\dspd.exe" `
             "installer/dspd.iss"
+          if ($LASTEXITCODE -ne 0) { throw "ISCC compilation failed with exit code $LASTEXITCODE" }
 
           $setupFile = "installer/Output/dspd-Setup-v${ver}-${arch}.exe"
+          if (-not (Test-Path $setupFile)) { throw "Expected installer not found at $setupFile" }
           $hash = (Get-FileHash -Path $setupFile -Algorithm SHA256).Hash.ToLower()
           "${hash}  $(Split-Path $setupFile -Leaf)" | Out-File -Encoding ascii "${setupFile}.sha256"
           Write-Host "Created Windows Installer: $setupFile (SHA256: $hash)"
 
-      - name: Upload release assets to GitHub Release
-        uses: softprops/action-gh-release@v2
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
         with:
-          files: |
-            dspd-${{ github.ref_name }}-${{ matrix.target }}.zip
-            dspd-${{ github.ref_name }}-${{ matrix.target }}.zip.sha256
+          name: release-assets-${{ matrix.target }}
+          path: |
+            dspd-*.zip
+            dspd-*.zip.sha256
             installer/Output/*.exe
             installer/Output/*.sha256
+          if-no-files-found: error
+
+  publish:
+    name: Publish Release
+    needs: [prepare, build]
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-assets-*
+          path: release-assets
+          merge-multiple: true
+
+      - name: Verify release artifacts
+        shell: pwsh
+        run: |
+          Get-ChildItem -Path release-assets -Recurse | Select-Object Name, Length
+          $count = (Get-ChildItem -Path release-assets -File).Count
+          Write-Host "Total assets downloaded: $count"
+          if ($count -lt 8) {
+            throw "Expected at least 8 release assets (2 zips, 2 zip sha256s, 2 exes, 2 exe sha256s), found $count"
+          }
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.prepare.outputs.release_tag }}
+          name: dspd ${{ needs.prepare.outputs.release_tag }}
+          target_commitish: ${{ github.sha }}
+          files: |
+            release-assets/*
             dspd.ps1
           generate_release_notes: true
-
+          make_latest: true

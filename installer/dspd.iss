@@ -2,7 +2,7 @@
 ; Copyright (c) 2026 itznan.
 ; Script for Inno Setup 6 - dspd Disk Benchmark Engine for Windows
 #ifndef MyAppVersion
-  #define MyAppVersion "0.1.0"
+  #define MyAppVersion "0.2.0"
 #endif
 
 #ifndef MyAppTarget

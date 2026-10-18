@@ -14,7 +14,7 @@ fn main() {
             // For debug/dev builds or non-interactive testing environments
             res.set_manifest(r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
-  <assemblyIdentity version="0.1.0.0" processorArchitecture="*" name="itznan.dspd" type="win32"/>
+  <assemblyIdentity version="0.2.0.0" processorArchitecture="*" name="itznan.dspd" type="win32"/>
   <description>Fast, safe, single-binary disk benchmarking for Windows, written in Rust.</description>
   <trustInfo xmlns="urn:schemas-microsoft-com:asm.v3">
     <security>
