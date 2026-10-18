@@ -96,7 +96,8 @@ jobs:
           $dir    = "dspd-${tag}-${target}"
           New-Item -ItemType Directory -Force -Path $dir | Out-Null
           Copy-Item "target/${target}/release/dspd.exe" -Destination $dir
-          Copy-Item "dspd.ps1", "README.md", "LICENSE" -Destination $dir
+          Copy-Item "dspd.ps1" -Destination (Join-Path $dir "dspd-interactive.ps1")
+          Copy-Item "README.md", "LICENSE" -Destination $dir
           $zip = "${dir}.zip"
           Compress-Archive -Path $dir -DestinationPath $zip -Force
           $hash = (Get-FileHash -Path $zip -Algorithm SHA256).Hash.ToLower()

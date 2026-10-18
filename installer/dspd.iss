@@ -53,18 +53,18 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 
 [Files]
 Source: "{#SourceExePath}"; DestDir: "{app}"; Flags: ignoreversion
-Source: "..\dspd.ps1"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\dspd.ps1"; DestDir: "{app}"; DestName: "dspd-interactive.ps1"; Flags: ignoreversion
 Source: "..\README.md"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
-Name: "{group}\dspd Interactive Benchmark"; Filename: "powershell.exe"; Parameters: "-ExecutionPolicy Bypass -NoExit -File ""{app}\dspd.ps1"""; WorkingDir: "{app}"; Comment: "Interactive drive selector and benchmark launcher"
+Name: "{group}\dspd Interactive Benchmark"; Filename: "powershell.exe"; Parameters: "-ExecutionPolicy Bypass -NoExit -File ""{app}\dspd-interactive.ps1"""; WorkingDir: "{app}"; Comment: "Interactive drive selector and benchmark launcher"
 Name: "{group}\dspd Command Prompt"; Filename: "cmd.exe"; Parameters: "/K ""cd /d ""{app}"" && title dspd Benchmark && dspd.exe --help"""; WorkingDir: "{app}"; Comment: "Open command prompt ready for dspd commands"
 Name: "{group}\{cm:UninstallProgram,{#MyAppName}}"; Filename: "{uninstallexe}"
-Name: "{autodesktop}\dspd Interactive Benchmark"; Filename: "powershell.exe"; Parameters: "-ExecutionPolicy Bypass -NoExit -File ""{app}\dspd.ps1"""; Tasks: desktopicon
+Name: "{autodesktop}\dspd Interactive Benchmark"; Filename: "powershell.exe"; Parameters: "-ExecutionPolicy Bypass -NoExit -File ""{app}\dspd-interactive.ps1"""; Tasks: desktopicon
 
 [Run]
-Filename: "powershell.exe"; Parameters: "-ExecutionPolicy Bypass -NoExit -File ""{app}\dspd.ps1"""; Description: "Launch dspd Interactive Benchmark"; Flags: postinstall skipifsilent nowait unchecked
+Filename: "powershell.exe"; Parameters: "-ExecutionPolicy Bypass -NoExit -File ""{app}\dspd-interactive.ps1"""; Description: "Launch dspd Interactive Benchmark"; Flags: postinstall skipifsilent nowait unchecked
 Filename: "{app}\{#MyAppExeName}"; Parameters: "--help"; Description: "View dspd CLI usage"; Flags: postinstall skipifsilent nowait unchecked
 
 [Code]
