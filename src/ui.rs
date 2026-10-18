@@ -11,7 +11,6 @@ use crate::engine::profile::{ALL_AVAILABLE_PROFILES, ALL_PROFILES};
 use crate::engine::sustained::SustainedAnalysis;
 use crate::report::ReportRow;
 
-
 /// Format floating-point microsecond latency to readable units.
 pub fn format_latency(us: f64) -> String {
     if us >= 1000.0 {
@@ -123,9 +122,7 @@ pub fn print_summary_tables(
         );
         if t.throttled {
             println!("──────────────────────────────────────────────────────────────────────────────────────────────────────────");
-            println!(
-                "  [!] WARNING: Thermal throttling likely impacted the results!"
-            );
+            println!("  [!] WARNING: Thermal throttling likely impacted the results!");
             if t.peak_temp_c >= 70 {
                 println!(
                     "      - Drive temperature reached {}°C (crossed 70°C threshold).",
@@ -168,7 +165,8 @@ pub fn print_sustained_summary(
         "  Burst Write Speed     : {:>8.1} MB/s (initial pseudo-SLC plateau)",
         analysis.burst_speed_mb_s
     );
-    if let (Some(cliff_gib), Some(drop_pct)) = (analysis.slc_cliff_gib, analysis.cliff_drop_percent) {
+    if let (Some(cliff_gib), Some(drop_pct)) = (analysis.slc_cliff_gib, analysis.cliff_drop_percent)
+    {
         println!(
             "  SLC Cache Cliff Point : {:>8.1} GiB (drop of {:.1}% after {:.1} GiB written)",
             cliff_gib, drop_pct, cliff_gib
@@ -204,9 +202,7 @@ pub fn print_sustained_summary(
         );
         if t.throttled {
             println!("────────────────────────────────────────────────────────────────────────");
-            println!(
-                "  [!] WARNING: Thermal throttling likely impacted the results!"
-            );
+            println!("  [!] WARNING: Thermal throttling likely impacted the results!");
             if t.peak_temp_c >= 70 {
                 println!(
                     "      - Drive temperature reached {}°C (crossed 70°C threshold).",

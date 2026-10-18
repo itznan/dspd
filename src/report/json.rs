@@ -120,8 +120,15 @@ pub fn write_json(
     warmup: u64,
     thermal: Option<ThermalTelemetry>,
 ) -> Result<JsonReport> {
-    let report =
-        build_json_report(rows, drive, test_size_bytes, passes, duration, warmup, thermal);
+    let report = build_json_report(
+        rows,
+        drive,
+        test_size_bytes,
+        passes,
+        duration,
+        warmup,
+        thermal,
+    );
     let json_string = to_json_string(&report)?;
 
     std::fs::write(path, json_string)

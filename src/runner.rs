@@ -25,7 +25,9 @@ use crate::report::csv::{write_csv, write_sustained_csv};
 use crate::report::json::{to_json_string, write_json, write_sustained_json};
 use crate::report::ReportRow;
 use crate::signal::{is_cancelled, CANCELLED};
-use crate::ui::{format_latency, format_latency_u64, print_summary_tables, print_sustained_summary};
+use crate::ui::{
+    format_latency, format_latency_u64, print_summary_tables, print_sustained_summary,
+};
 
 /// Benchmark a single drive across all requested profiles.
 pub fn benchmark_drive(
@@ -90,11 +92,7 @@ pub fn benchmark_drive(
 
     let mut rows: Vec<ReportRow> = Vec::new();
 
-    let parsed_mix = args
-        .rw_mix
-        .as_deref()
-        .map(RwMix::parse)
-        .transpose()?;
+    let parsed_mix = args.rw_mix.as_deref().map(RwMix::parse).transpose()?;
 
     for profile in profiles {
         if is_cancelled() {
@@ -164,8 +162,7 @@ pub fn benchmark_drive(
             }
         } else if profile.is_read_only {
             // Read-only profile (e.g. directstorage or llm-stream)
-            let read_avg =
-                run_test_passes(&test_file_path, test_size, profile, false, None, args)?;
+            let read_avg = run_test_passes(&test_file_path, test_size, profile, false, None, args)?;
             println!(
                 "  [{}] Read : {:>8.2} MB/s | {:>8.0} IOPS | p50: {:>7} | p99: {:>7} | p99.9: {:>7}",
                 profile.name,
@@ -205,8 +202,7 @@ pub fn benchmark_drive(
             }
         } else {
             // Direction 1: READ
-            let read_avg =
-                run_test_passes(&test_file_path, test_size, profile, false, None, args)?;
+            let read_avg = run_test_passes(&test_file_path, test_size, profile, false, None, args)?;
             println!(
                 "  [{}] Read : {:>8.2} MB/s | {:>8.0} IOPS | p50: {:>7} | p99: {:>7} | p99.9: {:>7}",
                 profile.name,
@@ -236,8 +232,7 @@ pub fn benchmark_drive(
             if is_cancelled() {
                 break;
             }
-            let write_avg =
-                run_test_passes(&test_file_path, test_size, profile, true, None, args)?;
+            let write_avg = run_test_passes(&test_file_path, test_size, profile, true, None, args)?;
             println!(
                 "  [{}] Write: {:>8.2} MB/s | {:>8.0} IOPS | p50: {:>7} | p99: {:>7} | p99.9: {:>7}",
                 profile.name,
@@ -323,7 +318,10 @@ pub fn run_test_passes(
                 .progress_chars("=>-"),
         );
         let prefix = if let Some(mix) = rw_mix {
-            format!("    {} Mixed {}:{}", profile.name, mix.read_pct, mix.write_pct)
+            format!(
+                "    {} Mixed {}:{}",
+                profile.name, mix.read_pct, mix.write_pct
+            )
         } else if is_write {
             format!("    {} Write", profile.name)
         } else {
@@ -373,11 +371,7 @@ pub fn run_test_passes(
 }
 
 /// Execute sustained sequential write profiling pass on a drive.
-pub fn benchmark_drive_sustained(
-    drive: &DriveInfo,
-    args: &Args,
-    output_dir: &Path,
-) -> Result<()> {
+pub fn benchmark_drive_sustained(drive: &DriveInfo, args: &Args, output_dir: &Path) -> Result<()> {
     if is_cancelled() {
         return Ok(());
     }
@@ -475,10 +469,7 @@ pub fn benchmark_drive_sustained(
 
     // Export reports
     let timestamp = Local::now().format("%Y%m%d_%H%M%S");
-    let csv_path = output_dir.join(format!(
-        "dspd_sustained_{}_{}.csv",
-        drive.letter, timestamp
-    ));
+    let csv_path = output_dir.join(format!("dspd_sustained_{}_{}.csv", drive.letter, timestamp));
     write_sustained_csv(&csv_path, &buckets)?;
     println!("  CSV Time-Series : {}", csv_path.display());
 

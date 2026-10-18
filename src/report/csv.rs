@@ -23,8 +23,12 @@ pub fn write_sustained_csv(
     path: &Path,
     buckets: &[crate::engine::sustained::SecondBucket],
 ) -> Result<()> {
-    let mut writer = csv::Writer::from_path(path)
-        .with_context(|| format!("Failed to create sustained CSV report at '{}'", path.display()))?;
+    let mut writer = csv::Writer::from_path(path).with_context(|| {
+        format!(
+            "Failed to create sustained CSV report at '{}'",
+            path.display()
+        )
+    })?;
 
     for bucket in buckets {
         writer.serialize(bucket)?;

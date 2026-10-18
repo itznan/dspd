@@ -116,9 +116,14 @@ fn test_live_nvme_smart_query_and_monitor() {
         }
 
         if let Ok(data) = res {
-            println!("Drive C: SMART - Temp: {}°C, Spare: {}%, Used: {}%, WarnTime: {}m, CritTime: {}m",
-                data.composite_temp_c, data.available_spare_pct, data.percentage_used_pct,
-                data.warning_temp_time_mins, data.critical_temp_time_mins);
+            println!(
+                "Drive C: SMART - Temp: {}°C, Spare: {}%, Used: {}%, WarnTime: {}m, CritTime: {}m",
+                data.composite_temp_c,
+                data.available_spare_pct,
+                data.percentage_used_pct,
+                data.warning_temp_time_mins,
+                data.critical_temp_time_mins
+            );
 
             assert!(data.composite_temp_c > 0 && data.composite_temp_c < 120);
             assert!(data.available_spare_pct <= 100);
@@ -131,8 +136,13 @@ fn test_live_nvme_smart_query_and_monitor() {
             m.sample();
             let telemetry = m.stop();
 
-            println!("Drive C: Telemetry - Start: {}°C, Peak: {}°C, End: {}°C, Throttled: {}",
-                telemetry.start_temp_c, telemetry.peak_temp_c, telemetry.end_temp_c, telemetry.throttled);
+            println!(
+                "Drive C: Telemetry - Start: {}°C, Peak: {}°C, End: {}°C, Throttled: {}",
+                telemetry.start_temp_c,
+                telemetry.peak_temp_c,
+                telemetry.end_temp_c,
+                telemetry.throttled
+            );
 
             assert!(telemetry.start_temp_c > 0);
             assert!(telemetry.peak_temp_c >= telemetry.start_temp_c);

@@ -87,7 +87,8 @@ fn main() -> Result<()> {
             .find(|p| p.name.eq_ignore_ascii_case(prof_name))
             .cloned()
             .with_context(|| {
-                let valid_names: Vec<&str> = ALL_AVAILABLE_PROFILES.iter().map(|p| p.name).collect();
+                let valid_names: Vec<&str> =
+                    ALL_AVAILABLE_PROFILES.iter().map(|p| p.name).collect();
                 format!(
                     "Unknown profile '{}'. Valid profiles: {}",
                     prof_name,

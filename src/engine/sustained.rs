@@ -313,8 +313,8 @@ where
 
         match res {
             Ok(_) => {}
-            Err(ref e)
-                if e.code() == windows::Win32::Foundation::ERROR_IO_PENDING.to_hresult() => {}
+            Err(ref e) if e.code() == windows::Win32::Foundation::ERROR_IO_PENDING.to_hresult() => {
+            }
             Err(e) => {
                 slot_meta.active = false;
                 return Err(e).context("WriteFile submission failed in sustained write engine");

@@ -15,11 +15,7 @@ pub struct XorShift64Star {
 impl XorShift64Star {
     pub fn new(seed: u64) -> Self {
         Self {
-            state: if seed == 0 {
-                0x853C49E6748FEA9B
-            } else {
-                seed
-            },
+            state: if seed == 0 { 0x853C49E6748FEA9B } else { seed },
         }
     }
 
