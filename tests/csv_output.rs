@@ -10,8 +10,10 @@ fn test_csv_serialization_roundtrip() {
         direction: "Read".to_string(),
         mb_s: 7120.45,
         iops: 6791.0,
+        p50_lat_us: 1120,
         avg_lat_us: 1170.5,
         p99_lat_us: 2400,
+        p999_lat_us: 3200,
     };
 
     let temp_file = std::env::temp_dir().join("dspd_test_roundtrip.csv");
@@ -24,7 +26,9 @@ fn test_csv_serialization_roundtrip() {
     assert_eq!(records[0].profile, "SEQ1M Q8T1");
     assert_eq!(records[0].direction, "Read");
     assert!((records[0].mb_s - 7120.45).abs() < 0.001);
+    assert_eq!(records[0].p50_lat_us, 1120);
     assert_eq!(records[0].p99_lat_us, 2400);
+    assert_eq!(records[0].p999_lat_us, 3200);
 
     let _ = std::fs::remove_file(temp_file);
 }

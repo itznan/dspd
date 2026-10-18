@@ -14,8 +14,12 @@ pub struct ReportRow {
     pub direction: String,
     pub mb_s: f64,
     pub iops: f64,
+    #[serde(default)]
+    pub p50_lat_us: u64,
     pub avg_lat_us: f64,
     pub p99_lat_us: u64,
+    #[serde(default)]
+    pub p999_lat_us: u64,
 }
 
 /// Retrieve the current user's Desktop folder path using Win32 Shell API with environment fallback.

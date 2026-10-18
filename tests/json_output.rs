@@ -22,24 +22,30 @@ fn test_json_serialization_and_roundtrip() {
             direction: "Read".to_string(),
             mb_s: 7120.45,
             iops: 6790.6,
+            p50_lat_us: 1100,
             avg_lat_us: 1150.2,
             p99_lat_us: 1420,
+            p999_lat_us: 1800,
         },
         ReportRow {
             profile: "SEQ1M Q8T1".to_string(),
             direction: "Write".to_string(),
             mb_s: 6850.12,
             iops: 6532.8,
+            p50_lat_us: 1150,
             avg_lat_us: 1210.0,
             p99_lat_us: 1530,
+            p999_lat_us: 1950,
         },
         ReportRow {
             profile: "RND4K Q32T1".to_string(),
             direction: "Read".to_string(),
             mb_s: 450.78,
             iops: 110050.0,
+            p50_lat_us: 250,
             avg_lat_us: 285.5,
             p99_lat_us: 420,
+            p999_lat_us: 580,
         },
     ];
 
@@ -88,8 +94,10 @@ fn test_json_serialization_with_thermal_telemetry() {
         direction: "Read".to_string(),
         mb_s: 7120.45,
         iops: 6790.6,
+        p50_lat_us: 1100,
         avg_lat_us: 1150.2,
         p99_lat_us: 1420,
+        p999_lat_us: 1800,
     }];
 
     let thermal = ThermalTelemetry {

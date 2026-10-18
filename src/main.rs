@@ -8,7 +8,7 @@ use clap::Parser;
 
 use dspd::cli::{Args, VERSION};
 use dspd::drives;
-use dspd::engine::profile::{Profile, ALL_PROFILES};
+use dspd::engine::profile::{Profile, ALL_AVAILABLE_PROFILES, ALL_PROFILES};
 use dspd::report::get_desktop_dir;
 use dspd::runner::{benchmark_drive, benchmark_drive_sustained};
 use dspd::signal::{is_cancelled, register_ctrl_handler};
@@ -82,14 +82,16 @@ fn main() -> Result<()> {
 
     // Select profiles
     let profiles_to_run: Vec<Profile> = if let Some(ref prof_name) = args.profile {
-        vec![ALL_PROFILES
+        vec![ALL_AVAILABLE_PROFILES
             .iter()
             .find(|p| p.name.eq_ignore_ascii_case(prof_name))
             .cloned()
             .with_context(|| {
+                let valid_names: Vec<&str> = ALL_AVAILABLE_PROFILES.iter().map(|p| p.name).collect();
                 format!(
-                    "Unknown profile '{}'. Valid profiles: SEQ1M Q8T1, SEQ1M Q1T1, RND4K Q32T1, RND4K Q1T1",
-                    prof_name
+                    "Unknown profile '{}'. Valid profiles: {}",
+                    prof_name,
+                    valid_names.join(", ")
                 )
             })?]
     } else {

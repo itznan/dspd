@@ -7,11 +7,10 @@ use anyhow::Result;
 use std::io::{stdin, stdout, Write};
 
 use crate::drives::{DriveInfo, ThermalTelemetry};
-use crate::engine::profile::ALL_PROFILES;
+use crate::engine::profile::{ALL_AVAILABLE_PROFILES, ALL_PROFILES};
 use crate::engine::sustained::SustainedAnalysis;
 use crate::report::ReportRow;
 
-const SUMMARY_PROFILES: [&str; 4] = ["SEQ1M Q8T1", "SEQ1M Q1T1", "RND4K Q32T1", "RND4K Q1T1"];
 
 /// Format floating-point microsecond latency to readable units.
 pub fn format_latency(us: f64) -> String {
@@ -33,10 +32,22 @@ pub fn format_latency_u64(us: u64) -> String {
 
 /// Print profile specifications and configurations for validation purposes.
 pub fn print_validation_commands(duration: u64, warmup: u64) {
-    println!("dspd benchmark profile configurations:\n");
+    println!("dspd benchmark standard profile configurations:\n");
     for p in ALL_PROFILES {
         println!("  {}", p.spec(duration, warmup, false));
         println!("  {}", p.spec(duration, warmup, true));
+    }
+    println!("\ndspd domain workload presets:\n");
+    for p in ALL_AVAILABLE_PROFILES
+        .iter()
+        .filter(|p| !ALL_PROFILES.contains(p))
+    {
+        if p.default_rw_mix.is_some() || p.is_read_only {
+            println!("  {}", p.spec(duration, warmup, false));
+        } else {
+            println!("  {}", p.spec(duration, warmup, false));
+            println!("  {}", p.spec(duration, warmup, true));
+        }
     }
 }
 
@@ -63,84 +74,55 @@ pub fn print_summary_tables(
     drive: &DriveInfo,
     thermal: Option<&ThermalTelemetry>,
 ) {
-    println!("════════════════════════════════════════════════════════════════════════");
+    println!("══════════════════════════════════════════════════════════════════════════════════════════════════════════");
     println!(
         "  dspd Benchmark Summary — Drive {}: ({})",
         drive.letter, drive.model
     );
-    println!("────────────────────────────────────────────────────────────────────────");
-    println!("  Profile        │ Read (MB/s) │ Write (MB/s) │ Read IOPS │ Write IOPS");
-    println!("────────────────────────────────────────────────────────────────────────");
+    println!("──────────────────────────────────────────────────────────────────────────────────────────────────────────");
+    println!("  Profile         │ Direction │   Throughput │       IOPS │    Avg Lat │    p50 Lat │    p99 Lat │   p99.9 Lat");
+    println!("──────────────────────────────────────────────────────────────────────────────────────────────────────────");
 
-    for prof in SUMMARY_PROFILES {
-        let read = rows
-            .iter()
-            .find(|r| r.profile == prof && r.direction == "Read");
-        let write = rows
-            .iter()
-            .find(|r| r.profile == prof && r.direction == "Write");
-
-        let r_mb = read
-            .map(|r| format!("{:>10.2}", r.mb_s))
-            .unwrap_or_else(|| "         —".to_string());
-        let w_mb = write
-            .map(|r| format!("{:>10.2}", r.mb_s))
-            .unwrap_or_else(|| "         —".to_string());
-        let r_iops = read
-            .map(|r| format!("{:>10.0}", r.iops))
-            .unwrap_or_else(|| "         —".to_string());
-        let w_iops = write
-            .map(|r| format!("{:>10.0}", r.iops))
-            .unwrap_or_else(|| "         —".to_string());
-
+    for row in rows {
         println!(
-            "  {:<14} │ {} │ {} │ {} │ {}",
-            prof, r_mb, w_mb, r_iops, w_iops
+            "  {:<15} │ {:<9} │ {:>10.2} MB/s│ {:>10.0} │ {:>10} │ {:>10} │ {:>10} │ {:>11}",
+            row.profile,
+            row.direction,
+            row.mb_s,
+            row.iops,
+            format_latency(row.avg_lat_us),
+            format_latency_u64(row.p50_lat_us),
+            format_latency_u64(row.p99_lat_us),
+            format_latency_u64(row.p999_lat_us)
         );
     }
-    println!("────────────────────────────────────────────────────────────────────────");
+    println!("──────────────────────────────────────────────────────────────────────────────────────────────────────────");
 
-    println!("  Profile        │ Read Avg Lat │ Read p99 Lat │ Write Avg Lat │ Write p99 Lat");
-    println!("────────────────────────────────────────────────────────────────────────");
-    for prof in SUMMARY_PROFILES {
-        let read = rows
-            .iter()
-            .find(|r| r.profile == prof && r.direction == "Read");
-        let write = rows
-            .iter()
-            .find(|r| r.profile == prof && r.direction == "Write");
-
-        let r_avg = read
-            .map(|r| format!("{:>11}", format_latency(r.avg_lat_us)))
-            .unwrap_or_else(|| "          —".to_string());
-        let r_p99 = read
-            .map(|r| format!("{:>11}", format_latency_u64(r.p99_lat_us)))
-            .unwrap_or_else(|| "          —".to_string());
-        let w_avg = write
-            .map(|r| format!("{:>12}", format_latency(r.avg_lat_us)))
-            .unwrap_or_else(|| "           —".to_string());
-        let w_p99 = write
-            .map(|r| format!("{:>12}", format_latency_u64(r.p99_lat_us)))
-            .unwrap_or_else(|| "           —".to_string());
-
-        println!(
-            "  {:<14} │ {} │ {} │ {} │ {}",
-            prof, r_avg, r_p99, w_avg, w_p99
-        );
+    for row in rows {
+        if row.profile == "llm-stream" {
+            let est_load_secs = if row.mb_s > 0.0 {
+                (16.0 * 1024.0 * 1024.0 * 1024.0) / (row.mb_s * 1_000_000.0)
+            } else {
+                0.0
+            };
+            println!(
+                "  LLM Streaming   │ 16 GiB Model Weights Load Time: ~{:.2}s",
+                est_load_secs
+            );
+        }
     }
 
     if let Some(t) = thermal {
-        println!("────────────────────────────────────────────────────────────────────────");
         println!(
-            "  Thermal        │ Temp: {}°C -> {}°C peak (end: {}°C)",
+            "  Thermal         │ Temp: {}°C -> {}°C peak (end: {}°C)",
             t.start_temp_c, t.peak_temp_c, t.end_temp_c
         );
         println!(
-            "  SMART Health   │ Spare: {}% │ Life Used: {}% │ Crit Temp Time: {} min",
+            "  SMART Health    │ Spare: {}% │ Life Used: {}% │ Crit Temp Time: {} min",
             t.available_spare_pct, t.percentage_used_pct, t.critical_temp_time_end_mins
         );
         if t.throttled {
-            println!("────────────────────────────────────────────────────────────────────────");
+            println!("──────────────────────────────────────────────────────────────────────────────────────────────────────────");
             println!(
                 "  [!] WARNING: Thermal throttling likely impacted the results!"
             );
@@ -160,7 +142,7 @@ pub fn print_summary_tables(
             }
         }
     }
-    println!("════════════════════════════════════════════════════════════════════════\n");
+    println!("══════════════════════════════════════════════════════════════════════════════════════════════════════════\n");
 }
 
 /// Print formatted sustained write profile summary including throughput curve sparkline,

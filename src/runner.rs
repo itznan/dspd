@@ -16,7 +16,7 @@ use windows::Win32::Foundation::CloseHandle;
 use crate::cli::Args;
 use crate::drives::{DriveInfo, NvmeThermalMonitor};
 use crate::engine::iocp::IocpEngine;
-use crate::engine::profile::Profile;
+use crate::engine::profile::{Profile, RwMix};
 use crate::engine::stats::{average_passes, PassResult};
 use crate::engine::sustained::{analyze_sustained_buckets, run_sustained_write_iocp};
 use crate::file::{open_benchmark_file, prepare_test_file, resolve_test_file_path, FileGuard};
@@ -90,61 +90,179 @@ pub fn benchmark_drive(
 
     let mut rows: Vec<ReportRow> = Vec::new();
 
+    let parsed_mix = args
+        .rw_mix
+        .as_deref()
+        .map(RwMix::parse)
+        .transpose()?;
+
     for profile in profiles {
         if is_cancelled() {
             break;
         }
 
-        // Direction 1: READ
-        let read_avg = run_test_passes(&test_file_path, test_size, profile, false, args)?;
-        println!(
-            "  [{}] Read : {:>8.2} MB/s | {:>8.0} IOPS | Avg: {:>7} | p99: {:>7}",
-            profile.name,
-            read_avg.throughput_mb_s(),
-            read_avg.iops(profile.block_size),
-            format_latency(read_avg.avg_latency_us()),
-            format_latency_u64(read_avg.p99_latency_us())
-        );
-        rows.push(ReportRow {
-            profile: profile.name.to_string(),
-            direction: "Read".to_string(),
-            mb_s: read_avg.throughput_mb_s(),
-            iops: read_avg.iops(profile.block_size),
-            avg_lat_us: read_avg.avg_latency_us(),
-            p99_lat_us: read_avg.p99_latency_us(),
-        });
+        let effective_mix = parsed_mix.or(profile.default_rw_mix);
 
-        // Sample telemetry between benchmark stages
-        if let Some(ref monitor) = thermal_monitor {
-            monitor.sample();
-        }
+        if let Some(mix) = effective_mix {
+            // Mixed Read/Write workload
+            let mixed_avg =
+                run_test_passes(&test_file_path, test_size, profile, false, Some(mix), args)?;
+            println!(
+                "  [{}] Read ({:>2}%) : {:>8.2} MB/s | {:>8.0} IOPS | p50: {:>7} | p99: {:>7} | p99.9: {:>7}",
+                profile.name,
+                mix.read_pct,
+                mixed_avg.read_mb_s(),
+                mixed_avg.read_iops(),
+                format_latency_u64(mixed_avg.read_p50_us()),
+                format_latency_u64(mixed_avg.read_p99_us()),
+                format_latency_u64(mixed_avg.read_p999_us())
+            );
+            println!(
+                "  [{}] Write({:>2}%) : {:>8.2} MB/s | {:>8.0} IOPS | p50: {:>7} | p99: {:>7} | p99.9: {:>7}",
+                profile.name,
+                mix.write_pct,
+                mixed_avg.write_mb_s(),
+                mixed_avg.write_iops(),
+                format_latency_u64(mixed_avg.write_p50_us()),
+                format_latency_u64(mixed_avg.write_p99_us()),
+                format_latency_u64(mixed_avg.write_p999_us())
+            );
+            if mixed_avg.flush_count > 0 {
+                println!(
+                    "  [{}] PLP Flush  : {} flushes | Avg: {}",
+                    profile.name,
+                    mixed_avg.flush_count,
+                    format_latency(mixed_avg.avg_flush_us())
+                );
+            }
+            println!();
 
-        // Direction 2: WRITE
-        if is_cancelled() {
-            break;
-        }
-        let write_avg = run_test_passes(&test_file_path, test_size, profile, true, args)?;
-        println!(
-            "  [{}] Write: {:>8.2} MB/s | {:>8.0} IOPS | Avg: {:>7} | p99: {:>7}",
-            profile.name,
-            write_avg.throughput_mb_s(),
-            write_avg.iops(profile.block_size),
-            format_latency(write_avg.avg_latency_us()),
-            format_latency_u64(write_avg.p99_latency_us())
-        );
-        rows.push(ReportRow {
-            profile: profile.name.to_string(),
-            direction: "Write".to_string(),
-            mb_s: write_avg.throughput_mb_s(),
-            iops: write_avg.iops(profile.block_size),
-            avg_lat_us: write_avg.avg_latency_us(),
-            p99_lat_us: write_avg.p99_latency_us(),
-        });
-        println!();
+            rows.push(ReportRow {
+                profile: profile.name.to_string(),
+                direction: "Read".to_string(),
+                mb_s: mixed_avg.read_mb_s(),
+                iops: mixed_avg.read_iops(),
+                p50_lat_us: mixed_avg.read_p50_us(),
+                avg_lat_us: mixed_avg.read_avg_us(),
+                p99_lat_us: mixed_avg.read_p99_us(),
+                p999_lat_us: mixed_avg.read_p999_us(),
+            });
 
-        // Sample telemetry between benchmark stages
-        if let Some(ref monitor) = thermal_monitor {
-            monitor.sample();
+            rows.push(ReportRow {
+                profile: profile.name.to_string(),
+                direction: "Write".to_string(),
+                mb_s: mixed_avg.write_mb_s(),
+                iops: mixed_avg.write_iops(),
+                p50_lat_us: mixed_avg.write_p50_us(),
+                avg_lat_us: mixed_avg.write_avg_us(),
+                p99_lat_us: mixed_avg.write_p99_us(),
+                p999_lat_us: mixed_avg.write_p999_us(),
+            });
+
+            if let Some(ref monitor) = thermal_monitor {
+                monitor.sample();
+            }
+        } else if profile.is_read_only {
+            // Read-only profile (e.g. directstorage or llm-stream)
+            let read_avg =
+                run_test_passes(&test_file_path, test_size, profile, false, None, args)?;
+            println!(
+                "  [{}] Read : {:>8.2} MB/s | {:>8.0} IOPS | p50: {:>7} | p99: {:>7} | p99.9: {:>7}",
+                profile.name,
+                read_avg.throughput_mb_s(),
+                read_avg.iops(profile.block_size),
+                format_latency_u64(read_avg.p50_latency_us()),
+                format_latency_u64(read_avg.p99_latency_us()),
+                format_latency_u64(read_avg.p999_latency_us())
+            );
+            if profile.is_llm_stream {
+                let mb_s = read_avg.throughput_mb_s();
+                let est_load_secs = if mb_s > 0.0 {
+                    (16.0 * 1024.0 * 1024.0 * 1024.0) / (mb_s * 1_000_000.0)
+                } else {
+                    0.0
+                };
+                println!(
+                    "  [{}] 16 GiB Model Load Time: ~{:.2}s",
+                    profile.name, est_load_secs
+                );
+            }
+            println!();
+
+            rows.push(ReportRow {
+                profile: profile.name.to_string(),
+                direction: "Read".to_string(),
+                mb_s: read_avg.throughput_mb_s(),
+                iops: read_avg.iops(profile.block_size),
+                p50_lat_us: read_avg.p50_latency_us(),
+                avg_lat_us: read_avg.avg_latency_us(),
+                p99_lat_us: read_avg.p99_latency_us(),
+                p999_lat_us: read_avg.p999_latency_us(),
+            });
+
+            if let Some(ref monitor) = thermal_monitor {
+                monitor.sample();
+            }
+        } else {
+            // Direction 1: READ
+            let read_avg =
+                run_test_passes(&test_file_path, test_size, profile, false, None, args)?;
+            println!(
+                "  [{}] Read : {:>8.2} MB/s | {:>8.0} IOPS | p50: {:>7} | p99: {:>7} | p99.9: {:>7}",
+                profile.name,
+                read_avg.throughput_mb_s(),
+                read_avg.iops(profile.block_size),
+                format_latency_u64(read_avg.p50_latency_us()),
+                format_latency_u64(read_avg.p99_latency_us()),
+                format_latency_u64(read_avg.p999_latency_us())
+            );
+            rows.push(ReportRow {
+                profile: profile.name.to_string(),
+                direction: "Read".to_string(),
+                mb_s: read_avg.throughput_mb_s(),
+                iops: read_avg.iops(profile.block_size),
+                p50_lat_us: read_avg.p50_latency_us(),
+                avg_lat_us: read_avg.avg_latency_us(),
+                p99_lat_us: read_avg.p99_latency_us(),
+                p999_lat_us: read_avg.p999_latency_us(),
+            });
+
+            // Sample telemetry between benchmark stages
+            if let Some(ref monitor) = thermal_monitor {
+                monitor.sample();
+            }
+
+            // Direction 2: WRITE
+            if is_cancelled() {
+                break;
+            }
+            let write_avg =
+                run_test_passes(&test_file_path, test_size, profile, true, None, args)?;
+            println!(
+                "  [{}] Write: {:>8.2} MB/s | {:>8.0} IOPS | p50: {:>7} | p99: {:>7} | p99.9: {:>7}",
+                profile.name,
+                write_avg.throughput_mb_s(),
+                write_avg.iops(profile.block_size),
+                format_latency_u64(write_avg.p50_latency_us()),
+                format_latency_u64(write_avg.p99_latency_us()),
+                format_latency_u64(write_avg.p999_latency_us())
+            );
+            rows.push(ReportRow {
+                profile: profile.name.to_string(),
+                direction: "Write".to_string(),
+                mb_s: write_avg.throughput_mb_s(),
+                iops: write_avg.iops(profile.block_size),
+                p50_lat_us: write_avg.p50_latency_us(),
+                avg_lat_us: write_avg.avg_latency_us(),
+                p99_lat_us: write_avg.p99_latency_us(),
+                p999_lat_us: write_avg.p999_latency_us(),
+            });
+            println!();
+
+            // Sample telemetry between benchmark stages
+            if let Some(ref monitor) = thermal_monitor {
+                monitor.sample();
+            }
         }
     }
 
@@ -188,6 +306,7 @@ pub fn run_test_passes(
     test_size: u64,
     profile: &Profile,
     is_write: bool,
+    rw_mix: Option<RwMix>,
     args: &Args,
 ) -> Result<PassResult> {
     let mut pass_metrics = Vec::with_capacity(args.passes as usize);
@@ -203,11 +322,14 @@ pub fn run_test_passes(
                 .template("{prefix} [{bar:20.green/black}] {pos}/{len}s")?
                 .progress_chars("=>-"),
         );
-        pb.set_prefix(format!(
-            "    {} {}",
-            profile.name,
-            if is_write { "Write" } else { "Read" }
-        ));
+        let prefix = if let Some(mix) = rw_mix {
+            format!("    {} Mixed {}:{}", profile.name, mix.read_pct, mix.write_pct)
+        } else if is_write {
+            format!("    {} Write", profile.name)
+        } else {
+            format!("    {} Read", profile.name)
+        };
+        pb.set_prefix(prefix);
 
         let file_handle = open_benchmark_file(test_file_path)?;
         let mut engine = IocpEngine::new(file_handle, test_size, profile)?;
@@ -231,6 +353,7 @@ pub fn run_test_passes(
             args.duration + args.warmup,
             args.warmup,
             is_write,
+            rw_mix,
             &CANCELLED,
         )?;
 

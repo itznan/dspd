@@ -66,4 +66,8 @@ pub struct Args {
     /// Sustained write test maximum duration in seconds
     #[arg(long, value_name = "SECS")]
     pub sustained_duration: Option<u64>,
+
+    /// Mixed Read/Write workload ratio (e.g. 70:30)
+    #[arg(long, value_name = "READ:WRITE")]
+    pub rw_mix: Option<String>,
 }
