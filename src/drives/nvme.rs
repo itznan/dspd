@@ -182,9 +182,9 @@ fn issue_nvme_smart_query(
 
     if payload_start + NVME_SMART_LOG_SIZE <= buffer.len() {
         parse_nvme_smart_log(&buffer[payload_start..payload_start + NVME_SMART_LOG_SIZE])
-            .map_err(|_| windows::core::Error::from_win32())
+            .map_err(|_| windows::core::Error::from_thread())
     } else {
-        Err(windows::core::Error::from_win32())
+        Err(windows::core::Error::from_thread())
     }
 }
 

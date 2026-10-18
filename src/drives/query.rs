@@ -100,7 +100,7 @@ pub fn query_seek_penalty(letter: char, handle: HANDLE) -> Result<MediaType, Dri
         .map_err(|e| DriveError::IoctlFailed(letter, e))?;
     }
 
-    Ok(if desc.IncursSeekPenalty.as_bool() {
+    Ok(if desc.IncursSeekPenalty {
         MediaType::HDD
     } else {
         MediaType::SSD
