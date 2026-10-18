@@ -5,7 +5,8 @@
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
-use windows::Win32::Foundation::{BOOL, FILETIME, HANDLE};
+use windows::core::BOOL;
+use windows::Win32::Foundation::{FILETIME, HANDLE};
 use windows::Win32::System::Threading::{
     GetCurrentProcess, GetCurrentThread, GetProcessTimes, SetThreadAffinityMask, SetThreadPriority,
     THREAD_PRIORITY_HIGHEST,

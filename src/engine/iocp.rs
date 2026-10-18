@@ -83,7 +83,7 @@ impl IocpEngine {
 
         // SAFETY: Associate the open file handle with the newly created completion port.
         unsafe {
-            CreateIoCompletionPort(file, iocp, 1, 0)
+            CreateIoCompletionPort(file, Some(iocp), 1, 0)
                 .context("Failed to associate file handle with I/O Completion Port")?;
         }
 

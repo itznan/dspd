@@ -4,6 +4,7 @@
 //! Console signal handling (Ctrl+C, break) and cancellation flags.
 
 use std::sync::atomic::{AtomicBool, Ordering};
+use windows::core::BOOL;
 use windows::Win32::System::Console::SetConsoleCtrlHandler;
 
 pub static CANCELLED: AtomicBool = AtomicBool::new(false);
@@ -21,16 +22,16 @@ pub fn set_cancelled() {
 }
 
 /// Win32 Console control event callback handler.
-unsafe extern "system" fn ctrl_handler(_: u32) -> windows::Win32::Foundation::BOOL {
+unsafe extern "system" fn ctrl_handler(_: u32) -> BOOL {
     set_cancelled();
     eprintln!("\n[!] Ctrl+C detected. Cleaning up benchmark files safely...");
-    windows::Win32::Foundation::TRUE
+    BOOL(1)
 }
 
 /// Register Win32 console signal handler.
 pub fn register_ctrl_handler() {
     // SAFETY: SetConsoleCtrlHandler registers a valid system callback.
     unsafe {
-        let _ = SetConsoleCtrlHandler(Some(ctrl_handler), windows::Win32::Foundation::TRUE);
+        let _ = SetConsoleCtrlHandler(Some(ctrl_handler), true);
     }
 }

@@ -242,7 +242,7 @@ where
 
     // Associate file handle with completion port
     unsafe {
-        CreateIoCompletionPort(file_handle, iocp, 1, 0)
+        CreateIoCompletionPort(file_handle, Some(iocp), 1, 0)
             .context("Failed to associate file handle with IOCP")?;
     }
 
