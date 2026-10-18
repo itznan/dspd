@@ -18,7 +18,7 @@ use anyhow::{Context, Result};
 use rand_core::{Rng, SeedableRng};
 use rand_xoshiro::Xoshiro256PlusPlus;
 use windows::core::{s, w, HRESULT};
-use windows::Win32::Foundation::HANDLE;
+use windows::Win32::Foundation::{HANDLE, S_OK};
 use windows::Win32::Storage::FileSystem::FlushFileBuffers;
 use windows::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress, LoadLibraryW};
 
@@ -331,8 +331,19 @@ impl IoRingEngine {
             is_registered: false,
         };
 
-        // Attempt pre-registration of file handles and buffers to minimize kernel validation overhead
-        engine.try_register_handles_and_buffers(max_bs);
+        // Attempt pre-registration of file handles and buffers on Windows 11 Version 3+
+        if version >= IORING_VERSION_3 {
+            engine.try_register_handles_and_buffers(max_bs);
+            if !engine.is_registered {
+                // Recreate clean ring without registration so submission queue is empty
+                unsafe {
+                    let _ = (api.close_io_ring)(engine.ioring);
+                    engine.ioring = std::ptr::null_mut();
+                    let _ =
+                        (api.create_io_ring)(version, flags, sq_size, cq_size, &mut engine.ioring);
+                }
+            }
+        }
 
         Ok(engine)
     }
@@ -385,8 +396,8 @@ impl IoRingEngine {
             let hr_pop1 = (self.api.pop_io_ring_completion)(self.ioring, &mut cqe1);
             let hr_pop2 = (self.api.pop_io_ring_completion)(self.ioring, &mut cqe2);
 
-            if hr_pop1.is_ok()
-                && hr_pop2.is_ok()
+            if hr_pop1 == S_OK
+                && hr_pop2 == S_OK
                 && cqe1.ResultCode.is_ok()
                 && cqe2.ResultCode.is_ok()
             {
@@ -450,10 +461,10 @@ impl IoRingEngine {
             in_flight_count += 1;
         }
 
-        // Submit initial batch
+        // Submit initial batch (all pending entries without waiting)
         let mut submitted = 0u32;
         unsafe {
-            let _ = (self.api.submit_io_ring)(self.ioring, qd as u32, 0, &mut submitted);
+            let _ = (self.api.submit_io_ring)(self.ioring, 0, 0, &mut submitted);
         }
 
         // 2. Harvesting and submission pump
@@ -479,10 +490,10 @@ impl IoRingEngine {
             let now_elapsed = pass_start.elapsed();
             let now_qpc = qpc_now();
 
-            // Reap completed entries
+            // Reap completed entries (PopIoRingCompletion returns S_OK if an entry was popped, S_FALSE if empty)
             let hr = unsafe { (self.api.pop_io_ring_completion)(self.ioring, &mut cqe) };
 
-            if hr.is_ok() && cqe.ResultCode.is_ok() {
+            if hr == S_OK && cqe.ResultCode.is_ok() {
                 let slot = cqe.UserData;
                 if slot < qd && self.slots[slot].in_flight {
                     self.slots[slot].in_flight = false;
@@ -524,17 +535,17 @@ impl IoRingEngine {
 
                         let mut sub = 0u32;
                         unsafe {
-                            let _ = (self.api.submit_io_ring)(self.ioring, 1, 0, &mut sub);
+                            let _ = (self.api.submit_io_ring)(self.ioring, 0, 0, &mut sub);
                         }
                     }
                 }
             } else {
-                // Queue was empty; wait up to 10ms for at least 1 completion
+                // Completion queue was empty (or transient error); wait up to 10ms for at least 1 completion
                 let remaining = pass_end.saturating_sub(elapsed);
                 let timeout_ms = (remaining.as_millis() as u32).clamp(1, 10);
                 let mut sub = 0u32;
                 unsafe {
-                    let _ = (self.api.submit_io_ring)(self.ioring, 0, timeout_ms, &mut sub);
+                    let _ = (self.api.submit_io_ring)(self.ioring, 1, timeout_ms, &mut sub);
                 }
             }
         }
@@ -543,10 +554,10 @@ impl IoRingEngine {
         while in_flight_count > 0 {
             let mut sub = 0u32;
             unsafe {
-                let _ = (self.api.submit_io_ring)(self.ioring, 0, 100, &mut sub);
+                let _ = (self.api.submit_io_ring)(self.ioring, 1, 100, &mut sub);
             }
             let hr = unsafe { (self.api.pop_io_ring_completion)(self.ioring, &mut cqe) };
-            if hr.is_ok() {
+            if hr == S_OK {
                 let slot = cqe.UserData;
                 if slot < qd && self.slots[slot].in_flight {
                     self.slots[slot].in_flight = false;
