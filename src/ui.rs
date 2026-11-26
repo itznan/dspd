@@ -129,6 +129,7 @@ pub fn print_summary_tables(
     }
     println!("{DIVIDER}");
 
+    let mut printed_llm = false;
     for row in rows {
         if row.profile == "llm-stream" {
             let est_load_secs = if row.mb_s > 0.0 {
@@ -140,19 +141,22 @@ pub fn print_summary_tables(
                 "  LLM Streaming   │ 16 GiB Model Weights Load Time: ~{:.2}s",
                 est_load_secs
             );
+            printed_llm = true;
         }
     }
 
     if rows.iter().any(|r| r.cpu_util_pct.is_some()) {
-        println!("  ────────────────┼───────────┼────────────────┼────────────┼───────────────┼────────────────");
-        println!("  CPU Efficiency  │ Direction │       CPU Util │  Cycles/IO │   IOPS / Core │");
-        println!("  ────────────────┼───────────┼────────────────┼────────────┼───────────────┼────────────────");
+        if printed_llm {
+            println!("{DIVIDER}");
+        }
+        println!("  CPU Efficiency  │ Direction │       CPU Util │  Cycles/IO │   IOPS / Core");
+        println!("{DIVIDER}");
         for row in rows {
             if let (Some(util), Some(cycles), Some(ipc)) =
                 (row.cpu_util_pct, row.cycles_per_io, row.iops_per_core)
             {
                 println!(
-                    "  {:<15} │ {:<9} │ {:>13.1}% │ {:>10} │ {:>13.0} │",
+                    "  {:<15} │ {:<9} │ {:>13.1}% │ {:>10} │ {:>13.0}",
                     row.profile, row.direction, util, cycles, ipc
                 );
             }

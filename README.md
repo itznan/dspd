@@ -2,7 +2,9 @@
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![CI](https://github.com/itznan/dspd/actions/workflows/ci.yml/badge.svg)](https://github.com/itznan/dspd/actions/workflows/ci.yml)
-[![Release](https://github.com/itznan/dspd/actions/workflows/release.yml/badge.svg)](https://github.com/itznan/dspd/actions/workflows/release.yml)
+[![Release](https://img.shields.io/badge/release-latest-brightgreen.svg)](https://github.com/itznan/dspd/releases/latest)
+[![Platform](https://img.shields.io/badge/platform-Windows%2010%20%7C%2011%20(x64%20%7C%20ARM64)-0078D6.svg)](https://github.com/itznan/dspd/releases/latest)
+[![Rust](https://img.shields.io/badge/rust-1.88%2B-orange.svg)](Cargo.toml)
 
 > Fast, safe, single-binary disk benchmarking and storage telemetry for Windows, written in Rust.
 
@@ -137,7 +139,7 @@ gh release download -R itznan/dspd -p "*x86_64-pc-windows-msvc.zip*"
 
 ### 4. Cargo / Build From Source
 
-Requires Rust `1.80.0+` ([rustup.rs](https://rustup.rs/)):
+Requires Rust `1.88.0+` ([rustup.rs](https://rustup.rs/)):
 
 ```powershell
 # Install directly to ~/.cargo/bin (already on PATH)
@@ -256,23 +258,23 @@ Capacity: 1863.0 GB | Free: 1240.5 GB
 [4/4] RND4K Q1T1   Read:   88.2 MB/s  |  Write:  240.1 MB/s
 
 ──────────────────────────────────────────────────────────────────────────────────────────────────────────
-  Profile        │ Direction │    Throughput │          IOPS │   Avg Lat │    p50 Lat │    p99 Lat │  p99.9 Lat
+  Profile         │ Direction │     Throughput │       IOPS │    Avg Lat │    p50 Lat │    p99 Lat │   p99.9 Lat
 ──────────────────────────────────────────────────────────────────────────────────────────────────────────
-  SEQ1M Q8T1     │ Read      │   7120.4 MB/s │          6791 │   1.17 ms │    1.12 ms │    2.40 ms │    3.10 ms
-  SEQ1M Q8T1     │ Write     │   6850.2 MB/s │          6533 │   1.22 ms │    1.18 ms │    2.80 ms │    3.45 ms
-  SEQ1M Q1T1     │ Read      │   4420.1 MB/s │          4215 │   0.23 ms │    0.22 ms │    0.45 ms │    0.62 ms
-  SEQ1M Q1T1     │ Write     │   4180.7 MB/s │          3987 │   0.24 ms │    0.23 ms │    0.51 ms │    0.70 ms
-  RND4K Q32T1    │ Read      │   1980.5 MB/s │        483520 │  66.18 µs │   62.00 µs │  182.00 µs │  245.00 µs
-  RND4K Q32T1    │ Write     │   1720.3 MB/s │        419995 │  76.19 µs │   71.00 µs │  210.00 µs │  290.00 µs
-  RND4K Q1T1     │ Read      │     88.2 MB/s │         21533 │  46.44 µs │   44.00 µs │   95.00 µs │  120.00 µs
-  RND4K Q1T1     │ Write     │    240.1 MB/s │         58618 │  17.06 µs │   16.00 µs │   42.00 µs │   58.00 µs
+  SEQ1M Q8T1      │ Read      │   7120.40 MB/s │       6791 │    1.17 ms │    1.12 ms │    2.40 ms │     3.10 ms
+  SEQ1M Q8T1      │ Write     │   6850.20 MB/s │       6533 │    1.22 ms │    1.18 ms │    2.80 ms │     3.45 ms
+  SEQ1M Q1T1      │ Read      │   4420.10 MB/s │       4215 │   230.0 µs │     220 µs │     450 µs │      620 µs
+  SEQ1M Q1T1      │ Write     │   4180.70 MB/s │       3987 │   240.0 µs │     230 µs │     510 µs │      700 µs
+  RND4K Q32T1     │ Read      │   1980.50 MB/s │     483520 │    66.2 µs │      62 µs │     182 µs │      245 µs
+  RND4K Q32T1     │ Write     │   1720.30 MB/s │     419995 │    76.2 µs │      71 µs │     210 µs │      290 µs
+  RND4K Q1T1      │ Read      │     88.20 MB/s │      21533 │    46.4 µs │      44 µs │      95 µs │      120 µs
+  RND4K Q1T1      │ Write     │    240.10 MB/s │      58618 │    17.1 µs │      16 µs │      42 µs │       58 µs
 ──────────────────────────────────────────────────────────────────────────────────────────────────────────
-  CPU Efficiency │ Direction │      CPU Util │     Cycles/IO │     IOPS / Core
+  CPU Efficiency  │ Direction │       CPU Util │  Cycles/IO │   IOPS / Core
 ──────────────────────────────────────────────────────────────────────────────────────────────────────────
-  RND4K Q32T1    │ Read      │          6.0% │         18533 │          205101
-  RND4K Q32T1    │ Write     │          4.1% │         23279 │          173083
-  RND4K Q1T1     │ Read      │          1.0% │         65410 │           91319
-  RND4K Q1T1     │ Write     │          3.1% │         68680 │           72538
+  RND4K Q32T1     │ Read      │           6.0% │      18533 │        205101
+  RND4K Q32T1     │ Write     │           4.1% │      23279 │        173083
+  RND4K Q1T1      │ Read      │           1.0% │      65410 │         91319
+  RND4K Q1T1      │ Write     │           3.1% │      68680 │         72538
 ──────────────────────────────────────────────────────────────────────────────────────────────────────────
   Thermal        │ Temp: 53°C -> 70°C peak (end: 61°C)
   SMART Health   │ Spare: 100% │ Life Used: 8% │ Crit Temp Time: 0 min
@@ -322,6 +324,22 @@ dspd domain workload presets:
   [llm-stream    Read       ] Block:   2 MiB | QD:  8 | Pattern: Sequential | Duration: 5s (warmup: 1s)
   [oltp-db       Mixed 70:30] Block:   8 KiB | QD: 32 | Pattern: Random     | Duration: 5s (warmup: 1s)
 ```
+
+---
+
+## Architecture & Design
+
+- **Zero-Allocation I/O Hot Loop**: Pre-allocates page-aligned `VirtualAlloc` buffers (filled with non-compressible `Xoshiro256PlusPlus` entropy) and pinned `OVERLAPPED` slots before the pass starts.
+- **OS Cache Bypass**: Opens targets with `FILE_FLAG_NO_BUFFERING | FILE_FLAG_WRITE_THROUGH | FILE_FLAG_OVERLAPPED` so reads and writes hit storage media directly rather than Windows RAM cache.
+- **Safe Lifecycle & Teardown**: On completion, error, panic, or `Ctrl+C`, pending IRPs are cancelled via `CancelIoEx` and drained before freeing buffers, and temporary test files (`dspd_test_*.dat`) are automatically deleted by RAII guards.
+- **Reports Exported**: Each run writes full metrics to timestamped `.csv` and `.json` files (Desktop by default, or `--output-dir`).
+
+---
+
+## Contributing & Security
+
+- Contributions are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) for build prerequisites, `unsafe` invariants, and PR checks.
+- See [CHANGELOG.md](CHANGELOG.md) for version history and [SECURITY.md](SECURITY.md) to report vulnerabilities privately.
 
 ---
 

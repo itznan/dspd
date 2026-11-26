@@ -2,7 +2,7 @@
 name          = "dspd"
 version       = "0.2.0"
 edition       = "2021"
-rust-version  = "1.80.0"
+rust-version  = "1.88.0"
 authors       = ["itznan"]
 repository    = "https://github.com/itznan/dspd"
 homepage      = "https://github.com/itznan/dspd"
@@ -25,13 +25,13 @@ path = "src/main.rs"
 [dependencies]
 anyhow       = "1.0"
 thiserror    = "2.0"
-clap         = { version = "4.5", features = ["derive"] }
-indicatif    = "0.18"
-hdrhistogram = "7.5"
-rand_xoshiro = "0.8.1"
+clap         = { version = "4.6", features = ["derive"] }
+indicatif    = { version = "0.18", default-features = false, features = ["unicode-width"] }
+hdrhistogram = { version = "7.6", default-features = false }
+rand_xoshiro = "0.8.2"
 rand_core    = "0.10"
-chrono       = "0.4"
-csv          = "1.3"
+chrono       = { version = "0.4", default-features = false, features = ["clock"] }
+csv          = "1.4"
 serde        = { version = "1.0", features = ["derive"] }
 serde_json   = "1.0"
 
@@ -53,7 +53,7 @@ windows = { version = "0.62", features = [
 ] }
 
 [build-dependencies]
-winres = "0.1"
+winresource = "0.1"
 
 [profile.release]
 opt-level     = 3
