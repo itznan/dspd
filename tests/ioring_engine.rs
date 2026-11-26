@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 itznan
 
+use dspd::drives::space::VolumeHandleGuard;
 use dspd::engine::ioring::{
     IoRingApi, IoRingEngine, IORING_BUFFER_INFO, IORING_BUFFER_REF, IORING_CAPABILITIES,
     IORING_CQE, IORING_CREATE_FLAGS, IORING_HANDLE_REF,
 };
-use dspd::engine::profile::ALL_PROFILES;
+use dspd::engine::profile::{ALL_PROFILES, DIRECTSTORAGE, OLTP_DB};
 use dspd::file::{open_benchmark_file, prepare_test_file, FileGuard};
 use std::sync::atomic::AtomicBool;
 
@@ -72,4 +73,26 @@ fn test_live_ioring_benchmark_pass_if_supported() {
     unsafe {
         let _ = windows::Win32::Foundation::CloseHandle(file_handle);
     }
+
+    if IoRingEngine::supports_writes() {
+        let handle = VolumeHandleGuard(open_benchmark_file(&test_file).unwrap());
+        let mut write_engine = IoRingEngine::new(handle.0, test_size, &OLTP_DB)
+            .expect("Failed to initialize IoRingEngine for mixed writes");
+        let mix_res = write_engine
+            .run_pass(1, 0, false, None, &cancelled)
+            .expect("IoRing mixed pass failed");
+        assert!(mix_res.read_ios > 0);
+        assert!(mix_res.write_ios > 0);
+    }
+
+    let small_file = temp_dir.join("dspd_test_ioring_small.dat");
+    let _small_guard = FileGuard {
+        path: small_file.clone(),
+    };
+    prepare_test_file(&small_file, 32 * 1024).unwrap();
+    let small_handle = VolumeHandleGuard(open_benchmark_file(&small_file).unwrap());
+    let mut small_engine = IoRingEngine::new(small_handle.0, 32 * 1024, &DIRECTSTORAGE).unwrap();
+    assert!(small_engine
+        .run_pass(1, 0, false, None, &cancelled)
+        .is_err());
 }

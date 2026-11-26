@@ -8,6 +8,15 @@ use std::path::PathBuf;
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
+fn parse_drive_letter(s: &str) -> Result<char, String> {
+    let trimmed = s.trim().trim_end_matches(['\\', '/']).trim_end_matches(':');
+    let mut chars = trimmed.chars();
+    match (chars.next(), chars.next()) {
+        (Some(c), None) if c.is_ascii_alphabetic() => Ok(c.to_ascii_uppercase()),
+        _ => Err(format!("Invalid drive letter '{s}' (expected e.g. C or D)")),
+    }
+}
+
 #[derive(Debug, Parser)]
 #[command(
     name    = "dspd",
@@ -16,7 +25,7 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 )]
 pub struct Args {
     /// Drive letters to benchmark, comma-separated (e.g. C,D)
-    #[arg(long, value_delimiter = ',')]
+    #[arg(long, value_delimiter = ',', value_parser = parse_drive_letter)]
     pub drives: Vec<char>,
 
     /// Test file size (e.g. 1GiB, 512MiB, 4GiB)

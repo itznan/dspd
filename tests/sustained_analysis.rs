@@ -1,13 +1,16 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 itznan
 
+use dspd::drives::space::VolumeHandleGuard;
 use dspd::drives::{BusType, DriveInfo, MediaType};
 use dspd::engine::sustained::{
-    analyze_sustained_buckets, render_sparkline, render_sparkline_resampled, SecondBucket,
-    SPARK_BLOCKS,
+    analyze_sustained_buckets, render_sparkline, render_sparkline_resampled,
+    run_sustained_write_iocp, SecondBucket, SPARK_BLOCKS,
 };
+use dspd::file::{open_benchmark_file, preallocate_test_file, FileGuard};
 use dspd::report::csv::write_sustained_csv;
 use dspd::report::json::{to_json_string, write_sustained_json, JsonReport};
+use std::sync::atomic::AtomicBool;
 
 #[test]
 fn test_sparkline_rendering_levels() {
@@ -212,4 +215,22 @@ fn test_sustained_csv_and_json_serialization() {
     assert!(deserialized.sustained.is_some());
 
     let _ = std::fs::remove_file(&json_file);
+}
+
+#[test]
+fn test_live_sustained_write_exact_target_and_preallocation() {
+    let temp_file = std::env::temp_dir().join("dspd_test_sustained_live.dat");
+    let _guard = FileGuard {
+        path: temp_file.clone(),
+    };
+    let target_bytes = 16 * 1024 * 1024; // 16 MiB
+    preallocate_test_file(&temp_file, target_bytes).unwrap();
+    let handle = VolumeHandleGuard(open_benchmark_file(&temp_file).unwrap());
+    let cancel = AtomicBool::new(false);
+
+    let buckets = run_sustained_write_iocp(handle.0, target_bytes, 30, &cancel, |_, _| {}).unwrap();
+    assert!(!buckets.is_empty());
+    let total_bytes: u64 = buckets.iter().map(|b| b.bytes).sum();
+    assert_eq!(total_bytes, target_bytes);
+    assert!(buckets.iter().all(|b| b.mb_s > 0.0));
 }

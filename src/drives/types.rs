@@ -53,14 +53,10 @@ pub struct DriveInfo {
 
 #[derive(Debug, Error)]
 pub enum DriveError {
-    #[error("Drive {0}: insufficient free disk space ({1:.1} GiB free, need {2:.1} GiB)")]
-    InsufficientSpace(char, f64, f64),
     #[error("Drive {0}: cannot open volume handle ({1})")]
     OpenFailed(char, windows::core::Error),
     #[error("Drive {0}: IOCTL query failed ({1})")]
     IoctlFailed(char, windows::core::Error),
-    #[error("Drive {0}: NVMe SMART query unsupported ({1})")]
-    NvmeUnsupported(char, String),
     #[error("Invalid NVMe SMART log length: {0} bytes (expected at least 512)")]
     InvalidNvmeLog(usize),
 }

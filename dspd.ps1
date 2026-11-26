@@ -32,7 +32,18 @@ if ($Elevate) {
     if (-not $isAdmin) {
         Write-Host "[*] Elevating to Administrator..." -ForegroundColor Cyan
         try {
-            $cmd = if ($PSCommandPath) { "& '$PSCommandPath'" } else { "iex (irm https://github.com/itznan/dspd/releases/latest/download/dspd.ps1)" }
+            $forwarded = @()
+            foreach ($kv in $PSBoundParameters.GetEnumerator()) {
+                if ($kv.Key -eq "Elevate") { continue }
+                if ($kv.Value -is [switch]) {
+                    if ($kv.Value.IsPresent) { $forwarded += "-$($kv.Key)" }
+                } else {
+                    $escaped = "$($kv.Value)".Replace("'", "''")
+                    $forwarded += "-$($kv.Key) '$escaped'"
+                }
+            }
+            $argStr = $forwarded -join " "
+            $cmd = if ($PSCommandPath) { "& '$PSCommandPath' $argStr" } else { "iex (irm https://github.com/itznan/dspd/releases/latest/download/dspd.ps1)" }
             Start-Process powershell.exe -ArgumentList "-NoProfile -ExecutionPolicy Bypass -Command `"$cmd`"" -Verb RunAs
             exit
         } catch {
@@ -44,6 +55,7 @@ if ($Elevate) {
 # 2. Locate or Download dspd.exe binary
 function Find-OrDownloadDspd {
     $destDir = Join-Path $env:TEMP "dspd"
+    $extractDir = Join-Path $destDir "extract"
     $destExe = Join-Path $destDir "dspd.exe"
     $destZip = Join-Path $destDir "dspd_download.zip"
 
@@ -70,12 +82,13 @@ function Find-OrDownloadDspd {
     if (-not $asset) { throw "No release asset found for $arch" }
 
     Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $destZip -UseBasicParsing
-    Expand-Archive -Path $destZip -DestinationPath $destDir -Force
+    if (Test-Path -LiteralPath $extractDir) { Remove-Item $extractDir -Recurse -Force }
+    Expand-Archive -Path $destZip -DestinationPath $extractDir -Force
     Remove-Item $destZip -Force -ErrorAction SilentlyContinue
 
-    $exe = Get-ChildItem -Path $destDir -Recurse -Filter "dspd.exe" | Select-Object -First 1
+    $exe = Get-ChildItem -Path $extractDir -Recurse -Filter "dspd.exe" | Select-Object -First 1
     if (-not $exe) { throw "dspd.exe not found in downloaded archive." }
-    if ($exe.FullName -ne $destExe) { Copy-Item $exe.FullName $destExe -Force }
+    Copy-Item $exe.FullName $destExe -Force
     return $destExe
 }
 
@@ -167,8 +180,9 @@ while ($null -eq $selectedItem) {
         }
     }
 
-    # Match by drive letter (e.g. C, D, E, F)
-    $letterMatch = $driveList | Where-Object { $_.Letter -eq $selection.ToUpper() }
+    # Match by drive letter (e.g. C, C:, D)
+    $normalizedLetter = $selection.TrimEnd(':').ToUpper()
+    $letterMatch = $driveList | Where-Object { $_.Letter -eq $normalizedLetter }
     if ($letterMatch) {
         $selectedItem = $letterMatch
         break
@@ -205,5 +219,9 @@ Write-Host "[*] Executing dspd engine..." -ForegroundColor DarkGray
 Write-Host "    Command: `"$dspdPath`" $($dspdArgs -join ' ')`n" -ForegroundColor DarkGray
 
 & $dspdPath @dspdArgs
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "`n[!] dspd exited with code $LASTEXITCODE." -ForegroundColor Red
+    exit $LASTEXITCODE
+}
 
 Write-Host "`n[+] Benchmark finished successfully." -ForegroundColor Green

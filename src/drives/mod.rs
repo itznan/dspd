@@ -71,7 +71,7 @@ pub fn discover(include_removable: bool) -> Vec<DriveInfo> {
                         free,
                     });
                 } else {
-                    eprintln!("  [WARN] Skipping drive {letter}:: {e}");
+                    eprintln!("  [WARN] Skipping drive {letter}: {e}");
                 }
             }
         }

@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 itznan
 
+use dspd::drives::space::VolumeHandleGuard;
 use dspd::engine::iocp::IocpEngine;
 use dspd::engine::profile::{
     RwMix, XorShift64Star, ALL_AVAILABLE_PROFILES, DIRECTSTORAGE, LLM_STREAM, OLTP_DB,
 };
 use dspd::engine::stats::PassResult;
-use dspd::file::{open_benchmark_file, prepare_test_file};
+use dspd::file::{open_benchmark_file, prepare_test_file, resolve_test_file_path, FileGuard};
 use std::sync::atomic::AtomicBool;
 
 #[test]
@@ -204,4 +205,30 @@ fn test_live_iocp_mixed_and_presets_execution() {
     }
 
     let _ = std::fs::remove_file(temp_file);
+}
+
+#[test]
+fn test_dual_block_size_rejects_undersized_file() {
+    let temp_file = std::env::temp_dir().join("dspd_test_undersized_ds.dat");
+    let _guard = FileGuard {
+        path: temp_file.clone(),
+    };
+    let file_size = 32 * 1024; // Smaller than DIRECTSTORAGE max block size (64 KiB)
+    prepare_test_file(&temp_file, file_size).unwrap();
+
+    let handle = VolumeHandleGuard(open_benchmark_file(&temp_file).unwrap());
+    let mut engine = IocpEngine::new(handle.0, file_size, &DIRECTSTORAGE).unwrap();
+    let cancel = AtomicBool::new(false);
+    assert!(engine.run_pass(1, 0, false, None, &cancel).is_err());
+}
+
+#[test]
+fn test_resolve_test_file_path_does_not_cross_drives() {
+    let existing = dspd::drives::discover(true);
+    let unused = ('A'..='Z')
+        .rev()
+        .find(|c| !existing.iter().any(|d| d.letter.eq_ignore_ascii_case(c)));
+    if let Some(letter) = unused {
+        assert!(resolve_test_file_path(letter).is_err());
+    }
 }

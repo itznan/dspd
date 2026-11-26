@@ -43,15 +43,23 @@ pub fn query_device_property(
         .map_err(|e| DriveError::IoctlFailed(letter, e))?;
     }
 
+    let valid_len = (bytes_returned as usize).min(buf.len());
+    if valid_len < mem::size_of::<STORAGE_DEVICE_DESCRIPTOR>() {
+        return Err(DriveError::IoctlFailed(
+            letter,
+            windows::Win32::Foundation::ERROR_INVALID_DATA.into(),
+        ));
+    }
+
     let desc: &STORAGE_DEVICE_DESCRIPTOR =
         unsafe { &*(buf.as_ptr() as *const STORAGE_DEVICE_DESCRIPTOR) };
 
-    let model = if desc.ProductIdOffset != 0 && (desc.ProductIdOffset as usize) < buf.len() {
+    let model = if desc.ProductIdOffset != 0 && (desc.ProductIdOffset as usize) < valid_len {
         let start = desc.ProductIdOffset as usize;
-        let end = buf[start..]
+        let end = buf[start..valid_len]
             .iter()
             .position(|&b| b == 0)
-            .map_or(buf.len(), |n| start + n);
+            .map_or(valid_len, |n| start + n);
         let s = String::from_utf8_lossy(&buf[start..end]).trim().to_string();
         if s.is_empty() {
             "Generic Drive".to_string()

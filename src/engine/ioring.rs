@@ -15,7 +15,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
 use anyhow::{Context, Result};
-use rand_core::{Rng, SeedableRng};
+use rand_core::SeedableRng;
 use rand_xoshiro::Xoshiro256PlusPlus;
 use windows::core::{s, w, HRESULT};
 use windows::Win32::Foundation::{HANDLE, S_OK};
@@ -25,14 +25,13 @@ use windows::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress, Lo
 use super::buffers::AlignedBuffer;
 use super::cpu::{CpuMetrics, CpuSnapshot};
 use super::iocp::IoOp;
-use super::profile::{Profile, RwMix, XorShift64Star};
+use super::profile::{next_io_params, Profile, RwMix, XorShift64Star};
 use super::qpc::{qpc_elapsed_us, qpc_now};
 use super::stats::PassResult;
 
 // ── Raw Win32 IoRing Structs (ioringapi.h & ntioring_x.h) ────────────────────
 
 pub const IORING_VERSION_1: u32 = 1;
-pub const IORING_VERSION_2: u32 = 2;
 pub const IORING_VERSION_3: u32 = 300;
 
 #[repr(C)]
@@ -282,20 +281,33 @@ impl IoRingEngine {
         IoRingApi::load().is_some()
     }
 
+    /// Check whether the loaded IoRing APIs support write operations (Windows 11 22H2+).
+    pub fn supports_writes() -> bool {
+        IoRingApi::load().is_some_and(|a| a.build_write_file.is_some())
+    }
+
     /// Initialize a new IoRing storage engine for the specified file handle and profile.
     pub fn new(file: HANDLE, file_size: u64, profile: &Profile) -> Result<Self> {
         let api = IoRingApi::load()
             .context("IoRing is not supported on this Windows build (requires Windows 11)")?;
 
         let qd = profile.queue_depth;
-        let sq_size = (qd as u32).clamp(16, 2048);
-        let cq_size = sq_size * 2;
+        let mut sq_size = (qd as u32).clamp(16, 2048);
+        let mut cq_size = sq_size * 2;
 
         let mut version = IORING_VERSION_1;
         if let Some(query_caps) = api.query_capabilities {
             let mut caps = IORING_CAPABILITIES::default();
-            if unsafe { (query_caps)(&mut caps) }.is_ok() && caps.MaxVersion >= IORING_VERSION_3 {
-                version = IORING_VERSION_3;
+            if unsafe { (query_caps)(&mut caps) }.is_ok() {
+                if caps.MaxSubmissionQueueSize > 0 {
+                    sq_size = sq_size.min(caps.MaxSubmissionQueueSize);
+                }
+                if caps.MaxCompletionQueueSize > 0 {
+                    cq_size = cq_size.min(caps.MaxCompletionQueueSize);
+                }
+                if caps.MaxVersion >= IORING_VERSION_3 {
+                    version = IORING_VERSION_3;
+                }
             }
         }
 
@@ -306,6 +318,7 @@ impl IoRingEngine {
         let hr = unsafe { (api.create_io_ring)(version, flags, sq_size, cq_size, &mut ioring) };
         if hr.is_err() {
             // Fall back to Version 1 if Version 3 failed
+            version = IORING_VERSION_1;
             let hr_v1 = unsafe {
                 (api.create_io_ring)(IORING_VERSION_1, flags, sq_size, cq_size, &mut ioring)
             };
@@ -339,8 +352,11 @@ impl IoRingEngine {
                 unsafe {
                     let _ = (api.close_io_ring)(engine.ioring);
                     engine.ioring = std::ptr::null_mut();
-                    let _ =
+                    let hr_recreate =
                         (api.create_io_ring)(version, flags, sq_size, cq_size, &mut engine.ioring);
+                    if hr_recreate.is_err() || engine.ioring.is_null() {
+                        anyhow::bail!("CreateIoRing recreation failed: {:?}", hr_recreate);
+                    }
                 }
             }
         }
@@ -417,18 +433,22 @@ impl IoRingEngine {
     ) -> Result<PassResult> {
         let mut result = PassResult::new()?;
         let qd = self.profile.queue_depth;
-        let bs = self.profile.block_size;
-        let min_bs = if let Some(alt) = self.profile.block_size_alt {
-            bs.min(alt)
-        } else {
-            bs
-        };
+        let max_bs = self
+            .profile
+            .block_size
+            .max(self.profile.block_size_alt.unwrap_or(0));
 
-        if self.file_size < min_bs {
+        if self.file_size < max_bs {
             anyhow::bail!(
-                "Test file size is smaller than profile minimum block size ({} bytes)",
-                min_bs
+                "Test file size is smaller than profile block size ({} bytes)",
+                max_bs
             );
+        }
+
+        let active_mix = rw_mix.or(self.profile.default_rw_mix);
+        let needs_write = is_write || active_mix.is_some_and(|m| m.write_pct > 0);
+        if needs_write && self.api.build_write_file.is_none() {
+            anyhow::bail!("IoRing write operations are not supported by this Windows version");
         }
 
         let seed = (qpc_now() as u64) ^ 0x3A5C9B1E4D2F7A8B;
@@ -437,13 +457,10 @@ impl IoRingEngine {
         let mut seq_idx: u64 = 0;
         let mut write_counter: u32 = 0;
 
-        let active_mix = rw_mix.or(self.profile.default_rw_mix);
-
         let pass_start = Instant::now();
         let warmup_end = std::time::Duration::from_secs(warmup_secs);
         let pass_end = std::time::Duration::from_secs(duration_secs);
 
-        let mut in_flight_count = 0usize;
         let mut measuring = false;
         let mut measure_start = Instant::now();
         let mut cpu_before = CpuSnapshot::default();
@@ -458,13 +475,13 @@ impl IoRingEngine {
                 is_write,
                 active_mix,
             )?;
-            in_flight_count += 1;
         }
 
         // Submit initial batch (all pending entries without waiting)
         let mut submitted = 0u32;
-        unsafe {
-            let _ = (self.api.submit_io_ring)(self.ioring, 0, 0, &mut submitted);
+        let hr_init = unsafe { (self.api.submit_io_ring)(self.ioring, 0, 0, &mut submitted) };
+        if hr_init.is_err() {
+            anyhow::bail!("Initial SubmitIoRing failed: {:?}", hr_init);
         }
 
         // 2. Harvesting and submission pump
@@ -489,20 +506,27 @@ impl IoRingEngine {
 
             let now_elapsed = pass_start.elapsed();
             let now_qpc = qpc_now();
+            let mut popped_any = false;
+            let mut reissued_any = false;
 
-            // Reap completed entries (PopIoRingCompletion returns S_OK if an entry was popped, S_FALSE if empty)
-            let hr = unsafe { (self.api.pop_io_ring_completion)(self.ioring, &mut cqe) };
-
-            if hr == S_OK && cqe.ResultCode.is_ok() {
+            // Drain all currently available CQEs before submitting the replacement batch.
+            while unsafe { (self.api.pop_io_ring_completion)(self.ioring, &mut cqe) } == S_OK {
+                popped_any = true;
                 let slot = cqe.UserData;
                 if slot < qd && self.slots[slot].in_flight {
                     self.slots[slot].in_flight = false;
-                    in_flight_count -= 1;
+
+                    if cqe.ResultCode.is_err() {
+                        anyhow::bail!("Async IoRing I/O completion failed: {:?}", cqe.ResultCode);
+                    }
 
                     let bytes = cqe.Information as u64;
-                    let latency_us = qpc_elapsed_us(self.slots[slot].issued_qpc, now_qpc);
+                    if bytes == 0 {
+                        anyhow::bail!("Async IoRing I/O completed with 0 bytes transferred");
+                    }
 
                     if measuring && now_elapsed < pass_end {
+                        let latency_us = qpc_elapsed_us(self.slots[slot].issued_qpc, now_qpc);
                         match self.slots[slot].op {
                             IoOp::Read => result.record_read(bytes, latency_us),
                             IoOp::Write => {
@@ -521,7 +545,6 @@ impl IoRingEngine {
                         }
                     }
 
-                    // Reissue slot if pass has not completed
                     if now_elapsed < pass_end && !cancelled.load(Ordering::Relaxed) {
                         self.build_io_slot(
                             slot,
@@ -531,18 +554,21 @@ impl IoRingEngine {
                             is_write,
                             active_mix,
                         )?;
-                        in_flight_count += 1;
-
-                        let mut sub = 0u32;
-                        unsafe {
-                            let _ = (self.api.submit_io_ring)(self.ioring, 0, 0, &mut sub);
-                        }
+                        reissued_any = true;
                     }
                 }
-            } else {
-                // Completion queue was empty (or transient error); wait up to 10ms for at least 1 completion
-                let remaining = pass_end.saturating_sub(elapsed);
-                let timeout_ms = (remaining.as_millis() as u32).clamp(1, 10);
+            }
+
+            if reissued_any {
+                let mut sub = 0u32;
+                let hr_sub = unsafe { (self.api.submit_io_ring)(self.ioring, 0, 0, &mut sub) };
+                if hr_sub.is_err() {
+                    anyhow::bail!("SubmitIoRing failed: {:?}", hr_sub);
+                }
+            } else if !popped_any {
+                let next_deadline = if measuring { pass_end } else { warmup_end };
+                let timeout_ms =
+                    (next_deadline.saturating_sub(elapsed).as_millis() as u32).clamp(1, 10);
                 let mut sub = 0u32;
                 unsafe {
                     let _ = (self.api.submit_io_ring)(self.ioring, 1, timeout_ms, &mut sub);
@@ -550,24 +576,7 @@ impl IoRingEngine {
             }
         }
 
-        // 3. Drain in-flight completions
-        while in_flight_count > 0 {
-            let mut sub = 0u32;
-            unsafe {
-                let _ = (self.api.submit_io_ring)(self.ioring, 1, 100, &mut sub);
-            }
-            let hr = unsafe { (self.api.pop_io_ring_completion)(self.ioring, &mut cqe) };
-            if hr == S_OK {
-                let slot = cqe.UserData;
-                if slot < qd && self.slots[slot].in_flight {
-                    self.slots[slot].in_flight = false;
-                    in_flight_count -= 1;
-                }
-            } else {
-                break;
-            }
-        }
-
+        // Capture active window elapsed time and CPU counters before draining remaining I/Os.
         if measuring {
             let cpu_after = CpuSnapshot::take();
             result.elapsed_ns = measure_start.elapsed().as_nanos() as u64;
@@ -580,7 +589,38 @@ impl IoRingEngine {
             ));
         }
 
+        // 3. Drain in-flight completions
+        self.drain_in_flight();
+
         Ok(result)
+    }
+
+    fn drain_in_flight(&mut self) {
+        if self.ioring.is_null() || !self.slots.iter().any(|s| s.in_flight) {
+            return;
+        }
+        let mut cqe = IORING_CQE::default();
+        let mut empty_waits = 0u32;
+        while self.slots.iter().any(|s| s.in_flight) {
+            let mut sub = 0u32;
+            unsafe {
+                let _ = (self.api.submit_io_ring)(self.ioring, 1, 200, &mut sub);
+            }
+            let mut progressed = false;
+            while unsafe { (self.api.pop_io_ring_completion)(self.ioring, &mut cqe) } == S_OK {
+                progressed = true;
+                let slot = cqe.UserData;
+                if slot < self.slots.len() && self.slots[slot].in_flight {
+                    self.slots[slot].in_flight = false;
+                }
+            }
+            if !progressed {
+                empty_waits += 1;
+                if empty_waits >= 25 {
+                    break;
+                }
+            }
+        }
     }
 
     /// Build a single asynchronous Read or Write SQE into the IoRing submission queue.
@@ -593,36 +633,16 @@ impl IoRingEngine {
         is_write: bool,
         active_mix: Option<RwMix>,
     ) -> Result<()> {
-        let op = if let Some(mix) = active_mix {
-            if prng.decide_read(mix.read_pct) {
-                IoOp::Read
-            } else {
-                IoOp::Write
-            }
-        } else if is_write {
-            IoOp::Write
-        } else {
-            IoOp::Read
-        };
-
-        let cur_bs = if let Some(alt) = self.profile.block_size_alt {
-            if prng.next_u64() & 1 == 0 {
-                alt
-            } else {
-                self.profile.block_size
-            }
-        } else {
-            self.profile.block_size
-        };
-
-        let num_blocks = self.file_size / cur_bs;
-        let offset = if self.profile.is_random {
-            (rng.next_u64() % num_blocks) * cur_bs
-        } else {
-            let idx = *seq_idx % num_blocks;
-            *seq_idx += 1;
-            idx * cur_bs
-        };
+        let (is_write_op, cur_bs, offset) = next_io_params(
+            &self.profile,
+            self.file_size,
+            is_write,
+            active_mix,
+            rng,
+            prng,
+            seq_idx,
+        );
+        let op = if is_write_op { IoOp::Write } else { IoOp::Read };
 
         self.slots[slot].op = op;
         self.slots[slot].issued_qpc = qpc_now();
@@ -683,6 +703,7 @@ impl IoRingEngine {
 
 impl Drop for IoRingEngine {
     fn drop(&mut self) {
+        self.drain_in_flight();
         if !self.ioring.is_null() {
             unsafe {
                 let _ = (self.api.close_io_ring)(self.ioring);

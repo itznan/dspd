@@ -17,16 +17,16 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
 use anyhow::{Context, Result};
-use rand_core::{Rng, SeedableRng};
+use rand_core::SeedableRng;
 use rand_xoshiro::Xoshiro256PlusPlus;
 use windows::Win32::Foundation::{CloseHandle, HANDLE, INVALID_HANDLE_VALUE};
 use windows::Win32::Storage::FileSystem::{FlushFileBuffers, ReadFile, WriteFile};
 use windows::Win32::System::IO::{
-    CreateIoCompletionPort, GetQueuedCompletionStatusEx, OVERLAPPED, OVERLAPPED_ENTRY,
+    CancelIoEx, CreateIoCompletionPort, GetQueuedCompletionStatusEx, OVERLAPPED, OVERLAPPED_ENTRY,
 };
 
 use super::buffers::AlignedBuffer;
-use super::profile::{Profile, RwMix, XorShift64Star};
+use super::profile::{next_io_params, Profile, RwMix, XorShift64Star};
 use super::qpc::{qpc_elapsed_us, qpc_now};
 use super::stats::PassResult;
 
@@ -135,17 +135,15 @@ impl IocpEngine {
     ) -> Result<PassResult> {
         let mut result = PassResult::new()?;
         let qd = self.profile.queue_depth;
-        let bs = self.profile.block_size;
-        let min_bs = if let Some(alt) = self.profile.block_size_alt {
-            bs.min(alt)
-        } else {
-            bs
-        };
+        let max_bs = self
+            .profile
+            .block_size
+            .max(self.profile.block_size_alt.unwrap_or(0));
 
-        if self.file_size < min_bs {
+        if self.file_size < max_bs {
             anyhow::bail!(
-                "Test file size is smaller than profile minimum block size ({} bytes)",
-                min_bs
+                "Test file size is smaller than profile block size ({} bytes)",
+                max_bs
             );
         }
 
@@ -161,7 +159,6 @@ impl IocpEngine {
         let warmup_end = std::time::Duration::from_secs(warmup_secs);
         let pass_end = std::time::Duration::from_secs(duration_secs);
 
-        let mut in_flight_count = 0usize;
         let mut measuring = false;
         let mut measure_start = Instant::now();
 
@@ -177,7 +174,6 @@ impl IocpEngine {
                 is_write,
                 active_mix,
             )?;
-            in_flight_count += 1;
         }
 
         const MAX_ENTRIES: usize = 32;
@@ -202,8 +198,8 @@ impl IocpEngine {
             }
 
             let timeout_ms = {
-                let remaining = pass_end.saturating_sub(elapsed);
-                (remaining.as_millis() as u32).clamp(1, 500)
+                let next_deadline = if measuring { pass_end } else { warmup_end };
+                (next_deadline.saturating_sub(elapsed).as_millis() as u32).clamp(1, 500)
             };
 
             let mut n_removed: u32 = 0;
@@ -237,7 +233,17 @@ impl IocpEngine {
                     .expect("Received IOCP completion for untracked OVERLAPPED pointer");
 
                 self.slots[slot_idx].in_flight = false;
-                in_flight_count -= 1;
+
+                // SAFETY: lpOverlapped is a completed slot's OVERLAPPED pointer.
+                let status = unsafe { (*entry.lpOverlapped).Internal as i32 };
+                if status < 0 || bytes == 0 {
+                    self.drain_in_flight();
+                    anyhow::bail!(
+                        "Async IOCP I/O completion failed (NTSTATUS 0x{:08X}, {} bytes)",
+                        status as u32,
+                        bytes
+                    );
+                }
 
                 // Record throughput and latency only if inside the measured window (post-warmup).
                 if measuring && now_elapsed < pass_end {
@@ -274,31 +280,11 @@ impl IocpEngine {
                         is_write,
                         active_mix,
                     )?;
-                    in_flight_count += 1;
                 }
             }
         }
 
-        // 3. Drain remaining in-flight requests so no dangling asynchronous operations touch buffers.
-        while in_flight_count > 0 {
-            let mut n: u32 = 0;
-            // SAFETY: Drain poll with short 200ms timeout.
-            let _ =
-                unsafe { GetQueuedCompletionStatusEx(self.iocp, &mut entries, &mut n, 200, false) };
-            for entry in entries.iter().take(n as usize) {
-                let ovl_ptr = entry.lpOverlapped;
-                if let Some(idx) = self.slots.iter().position(|s| s.raw_ovl == ovl_ptr) {
-                    if self.slots[idx].in_flight {
-                        self.slots[idx].in_flight = false;
-                        in_flight_count -= 1;
-                    }
-                }
-            }
-            if n == 0 {
-                break;
-            }
-        }
-
+        // Capture active window elapsed time and CPU counters before draining remaining I/Os.
         if measuring {
             let cpu_after = super::cpu::CpuSnapshot::take();
             result.elapsed_ns = measure_start.elapsed().as_nanos() as u64;
@@ -311,7 +297,39 @@ impl IocpEngine {
             ));
         }
 
+        // 3. Cancel and drain remaining in-flight requests before returning.
+        self.drain_in_flight();
+
         Ok(result)
+    }
+
+    fn drain_in_flight(&mut self) {
+        if !self.slots.iter().any(|s| s.in_flight) {
+            return;
+        }
+        // SAFETY: Cancel pending async I/Os so drain completes promptly without UAF.
+        unsafe {
+            let _ = CancelIoEx(self.file, None);
+        }
+        const MAX_ENTRIES: usize = 32;
+        let mut entries: [OVERLAPPED_ENTRY; MAX_ENTRIES] = unsafe { mem::zeroed() };
+        while self.slots.iter().any(|s| s.in_flight) {
+            let mut n: u32 = 0;
+            let ok =
+                unsafe { GetQueuedCompletionStatusEx(self.iocp, &mut entries, &mut n, 500, false) };
+            if ok.is_err() && n == 0 {
+                continue;
+            }
+            for entry in entries.iter().take(n as usize) {
+                if let Some(slot) = self
+                    .slots
+                    .iter_mut()
+                    .find(|s| s.raw_ovl == entry.lpOverlapped)
+                {
+                    slot.in_flight = false;
+                }
+            }
+        }
     }
 
     /// Issue a single asynchronous `ReadFile` or `WriteFile` request into the specified slot.
@@ -324,37 +342,16 @@ impl IocpEngine {
         is_write: bool,
         active_mix: Option<RwMix>,
     ) -> Result<()> {
-        let op = if let Some(mix) = active_mix {
-            if prng.decide_read(mix.read_pct) {
-                IoOp::Read
-            } else {
-                IoOp::Write
-            }
-        } else if is_write {
-            IoOp::Write
-        } else {
-            IoOp::Read
-        };
-
-        // Determine block size (for directstorage, 50% 32 KiB and 50% 64 KiB)
-        let cur_bs = if let Some(alt) = self.profile.block_size_alt {
-            if prng.next_u64() & 1 == 0 {
-                alt
-            } else {
-                self.profile.block_size
-            }
-        } else {
-            self.profile.block_size
-        };
-
-        let num_blocks = self.file_size / cur_bs;
-        let offset = if self.profile.is_random {
-            (rng.next_u64() % num_blocks) * cur_bs
-        } else {
-            let idx = *seq_idx % num_blocks;
-            *seq_idx += 1;
-            idx * cur_bs
-        };
+        let (is_write_op, cur_bs, offset) = next_io_params(
+            &self.profile,
+            self.file_size,
+            is_write,
+            active_mix,
+            rng,
+            prng,
+            seq_idx,
+        );
+        let op = if is_write_op { IoOp::Write } else { IoOp::Read };
 
         let slot_ctx = &mut self.slots[slot];
         slot_ctx.op = op;
@@ -418,8 +415,9 @@ impl IocpEngine {
 
 impl Drop for IocpEngine {
     fn drop(&mut self) {
+        self.drain_in_flight();
         if !self.iocp.is_invalid() {
-            // SAFETY: Close the completion port handle.
+            // SAFETY: Close the completion port handle after all in-flight I/Os have drained.
             unsafe {
                 let _ = CloseHandle(self.iocp);
             }

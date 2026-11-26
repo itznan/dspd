@@ -12,6 +12,20 @@ pub mod ui;
 
 use anyhow::{Context, Result};
 
+fn align_sector_bytes(bytes: f64) -> Result<u64> {
+    if !bytes.is_finite() || bytes <= 0.0 {
+        anyhow::bail!("Size must be a positive finite number");
+    }
+    if bytes > (u64::MAX - 4095) as f64 {
+        anyhow::bail!("Size exceeds maximum supported value");
+    }
+    let aligned = ((bytes as u64) + 4095) & !4095;
+    if aligned == 0 {
+        anyhow::bail!("Size must be greater than zero");
+    }
+    Ok(aligned)
+}
+
 /// Parse human-readable size strings (e.g., 1GiB, 512MiB, 4GiB, 1GB).
 pub fn parse_size(input: &str) -> Result<u64> {
     let s = input.trim();
@@ -40,10 +54,7 @@ pub fn parse_size(input: &str) -> Result<u64> {
         other => anyhow::bail!("Unknown size unit '{}'. Use GiB, MiB, KiB, or bytes", other),
     };
 
-    let int_bytes = bytes as u64;
-    // Align up to 4096 sector boundary
-    let aligned = (int_bytes + 4095) & !4095;
-    Ok(aligned)
+    align_sector_bytes(bytes)
 }
 
 /// Parse sustained size argument, supporting both pure GiB numbers (e.g. "50")
@@ -58,9 +69,7 @@ pub fn parse_sustained_size(input: &str) -> Result<u64> {
         let gib: f64 = s
             .parse()
             .with_context(|| format!("Invalid numeric value in sustained size: '{}'", s))?;
-        let bytes = (gib * 1024.0 * 1024.0 * 1024.0) as u64;
-        let aligned = (bytes + 4095) & !4095;
-        Ok(aligned)
+        align_sector_bytes(gib * 1024.0 * 1024.0 * 1024.0)
     } else {
         parse_size(s)
     }

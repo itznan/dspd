@@ -42,6 +42,8 @@ fn test_parse_affinity_mask_invalid() {
     assert!(parse_affinity_mask("").is_err());
     assert!(parse_affinity_mask("   ").is_err());
     assert!(parse_affinity_mask("0x").is_err());
+    assert!(parse_affinity_mask("0x0").is_err());
+    assert!(parse_affinity_mask("0x+1").is_err());
     assert!(parse_affinity_mask("0xGHI").is_err());
     assert!(parse_affinity_mask("abc").is_err());
     assert!(parse_affinity_mask("4-2").is_err()); // inverted range

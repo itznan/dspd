@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
-use windows::Win32::Foundation::{CloseHandle, HANDLE};
+use windows::Win32::Foundation::{ERROR_INVALID_DATA, HANDLE};
 use windows::Win32::Storage::FileSystem::{
     CreateFileW, FILE_ATTRIBUTE_NORMAL, FILE_READ_ATTRIBUTES, FILE_SHARE_READ, FILE_SHARE_WRITE,
     OPEN_EXISTING, SYNCHRONIZE,
@@ -172,20 +172,26 @@ fn issue_nvme_smart_query(
         )?;
     }
 
+    let valid_len = (bytes_returned as usize).min(buffer.len());
+    if valid_len < mem::size_of::<StorageProtocolDataDescriptor>() {
+        return Err(ERROR_INVALID_DATA.into());
+    }
+
     let desc = unsafe { &*(buffer.as_ptr() as *const StorageProtocolDataDescriptor) };
     let offset = desc.protocol_specific_data.protocol_data_offset as usize;
     let payload_start = if offset >= mem::size_of::<StorageProtocolDataDescriptor>() {
         offset
     } else {
-        8 + offset
+        8usize.saturating_add(offset)
     };
 
-    if payload_start + NVME_SMART_LOG_SIZE <= buffer.len() {
-        parse_nvme_smart_log(&buffer[payload_start..payload_start + NVME_SMART_LOG_SIZE])
-            .map_err(|_| windows::core::Error::from_thread())
-    } else {
-        Err(windows::core::Error::from_thread())
+    if let Some(payload_end) = payload_start.checked_add(NVME_SMART_LOG_SIZE) {
+        if payload_end <= valid_len {
+            return parse_nvme_smart_log(&buffer[payload_start..payload_end])
+                .map_err(|_| ERROR_INVALID_DATA.into());
+        }
     }
+    Err(ERROR_INVALID_DATA.into())
 }
 
 /// Query NVMe SMART / Health information using StorageAdapterProtocolSpecificProperty with
@@ -250,6 +256,19 @@ struct MonitorState {
     critical_temp_time_end_mins: u32,
 }
 
+fn update_monitor_state(state: &Mutex<MonitorState>, data: NvmeSmartData) {
+    if let Ok(mut s) = state.lock() {
+        s.end_temp_c = data.composite_temp_c;
+        if data.composite_temp_c > s.peak_temp_c {
+            s.peak_temp_c = data.composite_temp_c;
+        }
+        s.critical_temp_time_end_mins = data.critical_temp_time_mins;
+        s.available_spare_pct = data.available_spare_pct;
+        s.percentage_used_pct = data.percentage_used_pct;
+        s.warning_temp_time_mins = data.warning_temp_time_mins;
+    }
+}
+
 /// Lightweight background thermal and SMART telemetry monitor.
 /// Runs alongside the benchmark on a separate volume handle without impacting the IOCP hot path.
 pub struct NvmeThermalMonitor {
@@ -263,19 +282,11 @@ impl NvmeThermalMonitor {
     /// Start non-elevated background thermal polling on a drive if it supports NVMe SMART queries.
     /// Returns None gracefully for SATA, USB, virtual disks, or when unsupported.
     pub fn start(letter: char) -> Option<Self> {
-        let handle = open_telemetry_handle(letter).ok()?;
-        let initial_data = match query_nvme_smart(handle) {
-            Ok(data) => data,
-            Err(_) => {
-                unsafe {
-                    let _ = CloseHandle(handle);
-                }
-                return None;
-            }
+        let initial_data = {
+            let handle = open_telemetry_handle(letter).ok()?;
+            let _guard = VolumeHandleGuard(handle);
+            query_nvme_smart(handle).ok()?
         };
-        unsafe {
-            let _ = CloseHandle(handle);
-        }
 
         let state = Arc::new(Mutex::new(MonitorState {
             start_temp_c: initial_data.composite_temp_c,
@@ -312,16 +323,7 @@ impl NvmeThermalMonitor {
                 }
 
                 if let Ok(data) = query_nvme_smart(handle) {
-                    if let Ok(mut s) = thread_state.lock() {
-                        s.end_temp_c = data.composite_temp_c;
-                        if data.composite_temp_c > s.peak_temp_c {
-                            s.peak_temp_c = data.composite_temp_c;
-                        }
-                        s.critical_temp_time_end_mins = data.critical_temp_time_mins;
-                        s.available_spare_pct = data.available_spare_pct;
-                        s.percentage_used_pct = data.percentage_used_pct;
-                        s.warning_temp_time_mins = data.warning_temp_time_mins;
-                    }
+                    update_monitor_state(&thread_state, data);
                 }
             }
         });
@@ -339,16 +341,7 @@ impl NvmeThermalMonitor {
         if let Ok(handle) = open_telemetry_handle(self.letter) {
             let _guard = VolumeHandleGuard(handle);
             if let Ok(data) = query_nvme_smart(handle) {
-                if let Ok(mut s) = self.state.lock() {
-                    s.end_temp_c = data.composite_temp_c;
-                    if data.composite_temp_c > s.peak_temp_c {
-                        s.peak_temp_c = data.composite_temp_c;
-                    }
-                    s.critical_temp_time_end_mins = data.critical_temp_time_mins;
-                    s.available_spare_pct = data.available_spare_pct;
-                    s.percentage_used_pct = data.percentage_used_pct;
-                    s.warning_temp_time_mins = data.warning_temp_time_mins;
-                }
+                update_monitor_state(&self.state, data);
             }
         }
     }
@@ -363,7 +356,7 @@ impl NvmeThermalMonitor {
         // Take a final sample
         self.sample();
 
-        let s = self.state.lock().unwrap();
+        let s = self.state.lock().unwrap_or_else(|e| e.into_inner());
         let throttled = s.peak_temp_c >= THERMAL_THROTTLE_TEMP_THRESHOLD_C
             || s.critical_temp_time_end_mins > s.critical_temp_time_start_mins;
 

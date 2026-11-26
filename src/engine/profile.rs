@@ -4,6 +4,8 @@
 //! Benchmark profile definitions, mixed workload ratio (RwMix), PRNG, and domain presets.
 
 use anyhow::{Context, Result};
+use rand_core::Rng;
+use rand_xoshiro::Xoshiro256PlusPlus;
 use serde::{Deserialize, Serialize};
 
 /// Fast, deterministic 64-bit XorShift* pseudo-random number generator for IOCP dispatch.
@@ -233,4 +235,43 @@ impl Profile {
             self.name, direction, block_str, self.queue_depth, pattern, duration_secs, warmup_secs
         )
     }
+}
+
+/// Select the next I/O operation `(is_write, block_size, file_offset)` for a queue slot.
+#[inline]
+pub fn next_io_params(
+    profile: &Profile,
+    file_size: u64,
+    default_write: bool,
+    active_mix: Option<RwMix>,
+    rng: &mut Xoshiro256PlusPlus,
+    prng: &mut XorShift64Star,
+    seq_idx: &mut u64,
+) -> (bool, u64, u64) {
+    let is_write_op = if let Some(mix) = active_mix {
+        !prng.decide_read(mix.read_pct)
+    } else {
+        default_write
+    };
+
+    let cur_bs = if let Some(alt) = profile.block_size_alt {
+        if prng.next_u64() & 1 == 0 {
+            alt
+        } else {
+            profile.block_size
+        }
+    } else {
+        profile.block_size
+    };
+
+    let num_blocks = file_size / cur_bs;
+    let offset = if profile.is_random {
+        (rng.next_u64() % num_blocks) * cur_bs
+    } else {
+        let idx = *seq_idx % num_blocks;
+        *seq_idx += 1;
+        idx * cur_bs
+    };
+
+    (is_write_op, cur_bs, offset)
 }

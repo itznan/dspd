@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 itznan
 
+use std::sync::atomic::{AtomicU64, Ordering};
+
 use anyhow::Result;
 use rand_core::{Rng, SeedableRng};
 use rand_xoshiro::Xoshiro256PlusPlus;
@@ -26,12 +28,13 @@ unsafe impl Sync for AlignedBuffer {}
 
 impl AlignedBuffer {
     /// Allocate `size` bytes via `VirtualAlloc` and initialize with non-zero random data.
-    /// `size` must be a multiple of 4096.
+    /// `size` must be non-zero and a multiple of 4096.
     #[allow(clippy::manual_is_multiple_of)]
     pub fn new_random(size: usize) -> Result<Self> {
+        static SEED_SEQ: AtomicU64 = AtomicU64::new(0);
         assert!(
-            size % 4096 == 0,
-            "Buffer size must be sector-aligned (multiple of 4096)"
+            size > 0 && size % 4096 == 0,
+            "Buffer size must be non-zero and sector-aligned (multiple of 4096)"
         );
 
         // SAFETY: VirtualAlloc with MEM_RESERVE | MEM_COMMIT returns a page-aligned pointer or null.
@@ -40,11 +43,13 @@ impl AlignedBuffer {
             anyhow::bail!("VirtualAlloc failed: {}", std::io::Error::last_os_error());
         }
 
-        // Fill buffer with pseudo-random data so SSD controllers cannot deduplicate or compress.
+        // Fill buffer with distinct pseudo-random data so SSD controllers cannot deduplicate or compress.
+        let seq = SEED_SEQ.fetch_add(1, Ordering::Relaxed);
         let seed = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_nanos() as u64)
-            .unwrap_or(0x9E3779B97F4A7C15);
+            .unwrap_or(0x9E3779B97F4A7C15)
+            ^ seq.wrapping_mul(0x9E3779B97F4A7C15);
         let mut rng = Xoshiro256PlusPlus::seed_from_u64(seed);
 
         // SAFETY: ptr is valid for `size` bytes, and u8 has alignment 1.

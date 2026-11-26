@@ -64,16 +64,16 @@ pub struct TestConfig {
     pub warmup_secs: u64,
 }
 
-/// Construct a complete `JsonReport` structure from benchmark data.
 #[allow(clippy::too_many_arguments)]
-pub fn build_json_report(
-    rows: &[ReportRow],
+fn make_json_report(
     drive: &DriveInfo,
     test_size_bytes: u64,
     passes: u32,
-    duration: u64,
-    warmup: u64,
+    duration_secs: u64,
+    warmup_secs: u64,
+    results: Vec<ReportRow>,
     thermal: Option<ThermalTelemetry>,
+    sustained: Option<SustainedReport>,
 ) -> JsonReport {
     JsonReport {
         tool: "dspd".to_string(),
@@ -93,13 +93,43 @@ pub fn build_json_report(
             test_size_bytes,
             test_size_gib: test_size_bytes as f64 / (1024.0 * 1024.0 * 1024.0),
             passes,
-            duration_secs: duration,
-            warmup_secs: warmup,
+            duration_secs,
+            warmup_secs,
         },
-        results: rows.to_vec(),
+        results,
         thermal,
-        sustained: None,
+        sustained,
     }
+}
+
+fn write_report_file(path: &Path, report: JsonReport, label: &str) -> Result<JsonReport> {
+    let json_string = to_json_string(&report)?;
+    std::fs::write(path, json_string)
+        .with_context(|| format!("Failed to write {label} to '{}'", path.display()))?;
+    Ok(report)
+}
+
+/// Construct a complete `JsonReport` structure from benchmark data.
+#[allow(clippy::too_many_arguments)]
+pub fn build_json_report(
+    rows: &[ReportRow],
+    drive: &DriveInfo,
+    test_size_bytes: u64,
+    passes: u32,
+    duration: u64,
+    warmup: u64,
+    thermal: Option<ThermalTelemetry>,
+) -> JsonReport {
+    make_json_report(
+        drive,
+        test_size_bytes,
+        passes,
+        duration,
+        warmup,
+        rows.to_vec(),
+        thermal,
+        None,
+    )
 }
 
 /// Serialize a `JsonReport` into a pretty-printed JSON string.
@@ -129,12 +159,7 @@ pub fn write_json(
         warmup,
         thermal,
     );
-    let json_string = to_json_string(&report)?;
-
-    std::fs::write(path, json_string)
-        .with_context(|| format!("Failed to write JSON report to '{}'", path.display()))?;
-
-    Ok(report)
+    write_report_file(path, report, "JSON report")
 }
 
 /// Construct a `JsonReport` structure for sustained write profiling.
@@ -147,43 +172,29 @@ pub fn build_sustained_json_report(
     buckets: &[SecondBucket],
     thermal: Option<ThermalTelemetry>,
 ) -> JsonReport {
-    JsonReport {
-        tool: "dspd".to_string(),
-        version: VERSION.to_string(),
-        timestamp: Local::now().to_rfc3339(),
-        drive: DriveMeta {
-            letter: drive.letter.to_string(),
-            model: drive.model.clone(),
-            bus_type: drive.bus_type.to_string(),
-            media_type: drive.media_type.to_string(),
-            capacity_bytes: drive.capacity,
-            capacity_gb: drive.capacity as f64 / 1_000_000_000.0,
-            free_bytes: drive.free,
-            free_gb: drive.free as f64 / 1_000_000_000.0,
-        },
-        configuration: TestConfig {
-            test_size_bytes,
-            test_size_gib: test_size_bytes as f64 / (1024.0 * 1024.0 * 1024.0),
-            passes: 1,
-            duration_secs: max_duration_secs,
-            warmup_secs: 0,
-        },
-        results: Vec::new(),
+    let sustained = SustainedReport {
+        burst_speed_mb_s: analysis.burst_speed_mb_s,
+        slc_cliff_gib: analysis.slc_cliff_gib,
+        cliff_drop_percent: analysis.cliff_drop_percent,
+        sustained_speed_mb_s: analysis.sustained_speed_mb_s,
+        cv_percent: analysis.cv_percent,
+        peak_speed_mb_s: analysis.peak_speed_mb_s,
+        min_speed_mb_s: analysis.min_speed_mb_s,
+        total_gib_written: analysis.total_gib_written,
+        duration_secs: analysis.duration_secs,
+        sparkline: analysis.sparkline.clone(),
+        buckets: buckets.to_vec(),
+    };
+    make_json_report(
+        drive,
+        test_size_bytes,
+        1,
+        max_duration_secs,
+        0,
+        Vec::new(),
         thermal,
-        sustained: Some(SustainedReport {
-            burst_speed_mb_s: analysis.burst_speed_mb_s,
-            slc_cliff_gib: analysis.slc_cliff_gib,
-            cliff_drop_percent: analysis.cliff_drop_percent,
-            sustained_speed_mb_s: analysis.sustained_speed_mb_s,
-            cv_percent: analysis.cv_percent,
-            peak_speed_mb_s: analysis.peak_speed_mb_s,
-            min_speed_mb_s: analysis.min_speed_mb_s,
-            total_gib_written: analysis.total_gib_written,
-            duration_secs: analysis.duration_secs,
-            sparkline: analysis.sparkline.clone(),
-            buckets: buckets.to_vec(),
-        }),
-    }
+        Some(sustained),
+    )
 }
 
 /// Serialize and write sustained benchmark report to a JSON file.
@@ -205,14 +216,5 @@ pub fn write_sustained_json(
         buckets,
         thermal,
     );
-    let json_string = to_json_string(&report)?;
-
-    std::fs::write(path, json_string).with_context(|| {
-        format!(
-            "Failed to write sustained JSON report to '{}'",
-            path.display()
-        )
-    })?;
-
-    Ok(report)
+    write_report_file(path, report, "sustained JSON report")
 }

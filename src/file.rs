@@ -10,11 +10,13 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use indicatif::{ProgressBar, ProgressStyle};
-use windows::Win32::Foundation::{CloseHandle, HANDLE};
+use windows::Win32::Foundation::HANDLE;
 use windows::Win32::Storage::FileSystem::{
-    FILE_FLAG_NO_BUFFERING, FILE_FLAG_OVERLAPPED, FILE_FLAG_WRITE_THROUGH,
+    SetEndOfFile, SetFilePointerEx, FILE_BEGIN, FILE_FLAG_NO_BUFFERING, FILE_FLAG_OVERLAPPED,
+    FILE_FLAG_WRITE_THROUGH,
 };
 
+use crate::drives::space::VolumeHandleGuard;
 use crate::engine::buffers::AlignedBuffer;
 use crate::signal::is_cancelled;
 
@@ -31,32 +33,85 @@ impl Drop for FileGuard {
     }
 }
 
-/// Determine the benchmark file path on the specified drive, with fallback to temp directory.
-pub fn resolve_test_file_path(letter: char) -> PathBuf {
-    let candidate_path = PathBuf::from(format!(r"{letter}:\dspd_test.dat"));
+/// Determine the benchmark file path on the specified drive.
+/// Only falls back to temp dir if temp dir resides on the exact same drive letter.
+pub fn resolve_test_file_path(letter: char) -> Result<PathBuf> {
+    let upper = letter.to_ascii_uppercase();
+    let filename = format!("dspd_test_{upper}_{}.dat", std::process::id());
+    let candidate_path = PathBuf::from(format!(r"{upper}:\{filename}"));
+
     match OpenOptions::new()
         .write(true)
-        .create(true)
-        .truncate(true)
+        .create_new(true)
         .open(&candidate_path)
     {
         Ok(_) => {
             let _ = std::fs::remove_file(&candidate_path);
-            candidate_path
+            Ok(candidate_path)
         }
-        Err(_) => {
+        Err(root_err) => {
             let temp_dir = std::env::temp_dir();
-            temp_dir.join(format!("dspd_test_{letter}.dat"))
+            let temp_str = temp_dir.to_string_lossy();
+            let same_drive = temp_str.as_bytes().get(1) == Some(&b':')
+                && temp_str
+                    .chars()
+                    .next()
+                    .is_some_and(|c| c.eq_ignore_ascii_case(&upper));
+
+            if same_drive {
+                let temp_candidate = temp_dir.join(&filename);
+                OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(&temp_candidate)
+                    .with_context(|| {
+                        format!(
+                            "Drive {upper}: is not writable at root ({root_err}) or temp dir '{}'",
+                            temp_dir.display()
+                        )
+                    })?;
+                let _ = std::fs::remove_file(&temp_candidate);
+                Ok(temp_candidate)
+            } else {
+                anyhow::bail!(
+                    "Cannot create benchmark test file on drive {upper}: ({root_err}). Run as Administrator or verify write permissions."
+                );
+            }
         }
     }
+}
+
+/// Pre-allocate a sustained test file to `size` bytes without pre-writing flash cells.
+pub fn preallocate_test_file(path: &Path, size: u64) -> Result<()> {
+    let file_size = i64::try_from(size).context("Test file size exceeds i64 range")?;
+    let file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .custom_flags(FILE_FLAG_NO_BUFFERING.0 | FILE_FLAG_WRITE_THROUGH.0)
+        .open(path)
+        .with_context(|| {
+            format!(
+                "Failed to create benchmark test file at '{}'",
+                path.display()
+            )
+        })?;
+
+    let guard = VolumeHandleGuard(HANDLE(file.into_raw_handle() as _));
+    unsafe {
+        SetFilePointerEx(guard.0, file_size, None, FILE_BEGIN)?;
+        SetEndOfFile(guard.0)?;
+    }
+    Ok(())
 }
 
 /// Prepare the test file by pre-allocating and writing pseudo-random blocks sequentially.
 pub fn prepare_test_file(path: &Path, size: u64) -> Result<()> {
     const CHUNK_SIZE: usize = 1024 * 1024; // 1 MiB write chunks
-    let num_chunks = (size as usize).div_ceil(CHUNK_SIZE);
+    let num_chunks = size.div_ceil(CHUNK_SIZE as u64);
 
-    let pb = ProgressBar::new(num_chunks as u64);
+    let pb = ProgressBar::new(num_chunks);
     pb.set_style(
         ProgressStyle::default_bar()
             .template("{prefix} [{elapsed_precise}] [{bar:30.cyan/blue}] {pos}/{len} MiB")?
@@ -74,33 +129,36 @@ pub fn prepare_test_file(path: &Path, size: u64) -> Result<()> {
         .custom_flags(FILE_FLAG_NO_BUFFERING.0 | FILE_FLAG_WRITE_THROUGH.0)
         .open(path)
         .with_context(|| {
+            pb.finish_and_clear();
             format!(
                 "Failed to create benchmark test file at '{}'",
                 path.display()
             )
         })?;
 
-    let raw_handle = HANDLE(file.into_raw_handle() as _);
+    let _guard = VolumeHandleGuard(HANDLE(file.into_raw_handle() as _));
+    let mut remaining = size;
 
-    for _ in 0..num_chunks {
+    while remaining > 0 {
         if is_cancelled() {
-            unsafe {
-                let _ = CloseHandle(raw_handle);
-            }
+            pb.finish_and_clear();
             anyhow::bail!("Benchmark cancelled by user");
         }
 
-        // SAFETY: Direct synchronous sector-aligned write
-        unsafe {
-            let slice = std::slice::from_raw_parts(chunk_buffer.as_ptr(), CHUNK_SIZE);
-            windows::Win32::Storage::FileSystem::WriteFile(raw_handle, Some(slice), None, None)?;
+        let write_len = remaining.min(CHUNK_SIZE as u64).div_ceil(4096) * 4096;
+        // SAFETY: Direct synchronous sector-aligned write within CHUNK_SIZE buffer.
+        let res = unsafe {
+            let slice = std::slice::from_raw_parts(chunk_buffer.as_ptr(), write_len as usize);
+            windows::Win32::Storage::FileSystem::WriteFile(_guard.0, Some(slice), None, None)
+        };
+        if let Err(e) = res {
+            pb.finish_and_clear();
+            return Err(e.into());
         }
+        remaining = remaining.saturating_sub(CHUNK_SIZE as u64);
         pb.inc(1);
     }
 
-    unsafe {
-        let _ = CloseHandle(raw_handle);
-    }
     pb.finish_and_clear();
     Ok(())
 }

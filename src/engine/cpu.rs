@@ -126,10 +126,13 @@ pub fn parse_affinity_mask(s: &str) -> Result<usize> {
         anyhow::bail!("Affinity specification cannot be empty");
     }
 
-    if trimmed.starts_with("0x") || trimmed.starts_with("0X") {
+    let mask = if trimmed.starts_with("0x") || trimmed.starts_with("0X") {
         let hex_str = &trimmed[2..];
+        if hex_str.is_empty() || !hex_str.chars().all(|c| c.is_ascii_hexdigit()) {
+            anyhow::bail!("Invalid hex affinity mask '{}'", trimmed);
+        }
         usize::from_str_radix(hex_str, 16)
-            .map_err(|e| anyhow::anyhow!("Invalid hex affinity mask '{}': {}", trimmed, e))
+            .map_err(|e| anyhow::anyhow!("Invalid hex affinity mask '{}': {}", trimmed, e))?
     } else {
         let mut mask: usize = 0;
         for part in trimmed.split(',') {
@@ -173,11 +176,13 @@ pub fn parse_affinity_mask(s: &str) -> Result<usize> {
                 mask |= 1 << core;
             }
         }
-        if mask == 0 {
-            anyhow::bail!("No cores specified in affinity mask '{}'", trimmed);
-        }
-        Ok(mask)
+        mask
+    };
+
+    if mask == 0 {
+        anyhow::bail!("No cores specified in affinity mask '{}'", trimmed);
     }
+    Ok(mask)
 }
 
 /// Pin the calling thread to the specified CPU affinity mask and elevate thread priority.

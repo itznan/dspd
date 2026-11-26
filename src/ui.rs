@@ -67,24 +67,56 @@ pub fn prompt_ssd_wear(test_size_gib: f64, num_profiles: usize, passes: u32) -> 
     Ok(trimmed == "y" || trimmed == "yes")
 }
 
+fn print_thermal_section(thermal: &ThermalTelemetry, temp_label: &str, divider: &str) {
+    println!(
+        "  {:<15} │ Temp: {}°C -> {}°C peak (end: {}°C)",
+        temp_label, thermal.start_temp_c, thermal.peak_temp_c, thermal.end_temp_c
+    );
+    println!(
+        "  SMART Health    │ Spare: {}% │ Life Used: {}% │ Crit Temp Time: {} min",
+        thermal.available_spare_pct,
+        thermal.percentage_used_pct,
+        thermal.critical_temp_time_end_mins
+    );
+    if thermal.throttled {
+        println!("{divider}");
+        println!("  [!] WARNING: Thermal throttling likely impacted the results!");
+        if thermal.peak_temp_c >= 70 {
+            println!(
+                "      - Drive temperature reached {}°C (crossed 70°C threshold).",
+                thermal.peak_temp_c
+            );
+        }
+        if thermal.critical_temp_time_end_mins > thermal.critical_temp_time_start_mins {
+            println!(
+                "      - NVMe Critical Composite Temp Time increased by {} min ({} -> {} min).",
+                thermal.critical_temp_time_end_mins - thermal.critical_temp_time_start_mins,
+                thermal.critical_temp_time_start_mins,
+                thermal.critical_temp_time_end_mins
+            );
+        }
+    }
+}
+
 /// Print formatted console performance summary tables.
 pub fn print_summary_tables(
     rows: &[ReportRow],
     drive: &DriveInfo,
     thermal: Option<&ThermalTelemetry>,
 ) {
+    const DIVIDER: &str = "──────────────────────────────────────────────────────────────────────────────────────────────────────────";
     println!("══════════════════════════════════════════════════════════════════════════════════════════════════════════");
     println!(
         "  dspd Benchmark Summary — Drive {}: ({})",
         drive.letter, drive.model
     );
-    println!("──────────────────────────────────────────────────────────────────────────────────────────────────────────");
-    println!("  Profile         │ Direction │   Throughput │       IOPS │    Avg Lat │    p50 Lat │    p99 Lat │   p99.9 Lat");
-    println!("──────────────────────────────────────────────────────────────────────────────────────────────────────────");
+    println!("{DIVIDER}");
+    println!("  Profile         │ Direction │     Throughput │       IOPS │    Avg Lat │    p50 Lat │    p99 Lat │   p99.9 Lat");
+    println!("{DIVIDER}");
 
     for row in rows {
         println!(
-            "  {:<15} │ {:<9} │ {:>10.2} MB/s│ {:>10.0} │ {:>10} │ {:>10} │ {:>10} │ {:>11}",
+            "  {:<15} │ {:<9} │ {:>9.2} MB/s │ {:>10.0} │ {:>10} │ {:>10} │ {:>10} │ {:>11}",
             row.profile,
             row.direction,
             row.mb_s,
@@ -95,7 +127,7 @@ pub fn print_summary_tables(
             format_latency_u64(row.p999_lat_us)
         );
     }
-    println!("──────────────────────────────────────────────────────────────────────────────────────────────────────────");
+    println!("{DIVIDER}");
 
     for row in rows {
         if row.profile == "llm-stream" {
@@ -112,49 +144,24 @@ pub fn print_summary_tables(
     }
 
     if rows.iter().any(|r| r.cpu_util_pct.is_some()) {
-        println!("  ────────────────┼───────────┼─────────────┼───────────────┼────────────────");
-        println!("  CPU Efficiency  │ Direction │    CPU Util │     Cycles/IO │     IOPS / Core");
-        println!("  ────────────────┼───────────┼─────────────┼───────────────┼────────────────");
+        println!("  ────────────────┼───────────┼────────────────┼────────────┼───────────────┼────────────────");
+        println!("  CPU Efficiency  │ Direction │       CPU Util │  Cycles/IO │   IOPS / Core │");
+        println!("  ────────────────┼───────────┼────────────────┼────────────┼───────────────┼────────────────");
         for row in rows {
             if let (Some(util), Some(cycles), Some(ipc)) =
                 (row.cpu_util_pct, row.cycles_per_io, row.iops_per_core)
             {
                 println!(
-                    "  {:<15} │ {:<9} │ {:>10.1}% │ {:>13} │ {:>15.0}",
+                    "  {:<15} │ {:<9} │ {:>13.1}% │ {:>10} │ {:>13.0} │",
                     row.profile, row.direction, util, cycles, ipc
                 );
             }
         }
-        println!("──────────────────────────────────────────────────────────────────────────────────────────────────────────");
+        println!("{DIVIDER}");
     }
 
     if let Some(t) = thermal {
-        println!(
-            "  Thermal         │ Temp: {}°C -> {}°C peak (end: {}°C)",
-            t.start_temp_c, t.peak_temp_c, t.end_temp_c
-        );
-        println!(
-            "  SMART Health    │ Spare: {}% │ Life Used: {}% │ Crit Temp Time: {} min",
-            t.available_spare_pct, t.percentage_used_pct, t.critical_temp_time_end_mins
-        );
-        if t.throttled {
-            println!("──────────────────────────────────────────────────────────────────────────────────────────────────────────");
-            println!("  [!] WARNING: Thermal throttling likely impacted the results!");
-            if t.peak_temp_c >= 70 {
-                println!(
-                    "      - Drive temperature reached {}°C (crossed 70°C threshold).",
-                    t.peak_temp_c
-                );
-            }
-            if t.critical_temp_time_end_mins > t.critical_temp_time_start_mins {
-                println!(
-                    "      - NVMe Critical Composite Temp Time increased by {} min ({} -> {} min).",
-                    t.critical_temp_time_end_mins - t.critical_temp_time_start_mins,
-                    t.critical_temp_time_start_mins,
-                    t.critical_temp_time_end_mins
-                );
-            }
-        }
+        print_thermal_section(t, "Thermal", DIVIDER);
     }
     println!("══════════════════════════════════════════════════════════════════════════════════════════════════════════\n");
 }
@@ -166,18 +173,20 @@ pub fn print_sustained_summary(
     analysis: &SustainedAnalysis,
     thermal: Option<&ThermalTelemetry>,
 ) {
+    const DIVIDER: &str =
+        "────────────────────────────────────────────────────────────────────────";
     println!("════════════════════════════════════════════════════════════════════════");
     println!(
         "  dspd Sustained Write Profile — Drive {}: ({})",
         drive.letter, drive.model
     );
-    println!("────────────────────────────────────────────────────────────────────────");
+    println!("{DIVIDER}");
     println!(
         "  Throughput Curve ({:.1} GiB written over {}s):",
         analysis.total_gib_written, analysis.duration_secs
     );
     println!("  {}", analysis.sparkline);
-    println!("────────────────────────────────────────────────────────────────────────");
+    println!("{DIVIDER}");
     println!(
         "  Burst Write Speed     : {:>8.1} MB/s (initial pseudo-SLC plateau)",
         analysis.burst_speed_mb_s
@@ -208,33 +217,8 @@ pub fn print_sustained_summary(
     );
 
     if let Some(t) = thermal {
-        println!("────────────────────────────────────────────────────────────────────────");
-        println!(
-            "  Thermal Trajectory    : Temp: {}°C -> {}°C peak (end: {}°C)",
-            t.start_temp_c, t.peak_temp_c, t.end_temp_c
-        );
-        println!(
-            "  SMART Health          : Spare: {}% │ Life Used: {}% │ Crit Temp Time: {} min",
-            t.available_spare_pct, t.percentage_used_pct, t.critical_temp_time_end_mins
-        );
-        if t.throttled {
-            println!("────────────────────────────────────────────────────────────────────────");
-            println!("  [!] WARNING: Thermal throttling likely impacted the results!");
-            if t.peak_temp_c >= 70 {
-                println!(
-                    "      - Drive temperature reached {}°C (crossed 70°C threshold).",
-                    t.peak_temp_c
-                );
-            }
-            if t.critical_temp_time_end_mins > t.critical_temp_time_start_mins {
-                println!(
-                    "      - NVMe Critical Composite Temp Time increased by {} min ({} -> {} min).",
-                    t.critical_temp_time_end_mins - t.critical_temp_time_start_mins,
-                    t.critical_temp_time_start_mins,
-                    t.critical_temp_time_end_mins
-                );
-            }
-        }
+        println!("{DIVIDER}");
+        print_thermal_section(t, "Thermal Trajectory", DIVIDER);
     }
     println!("════════════════════════════════════════════════════════════════════════\n");
 }

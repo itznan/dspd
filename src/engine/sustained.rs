@@ -11,14 +11,15 @@ use std::time::Instant;
 use anyhow::{Context, Result};
 use hdrhistogram::Histogram;
 use serde::{Deserialize, Serialize};
-use windows::Win32::Foundation::{CloseHandle, HANDLE, INVALID_HANDLE_VALUE};
+use windows::Win32::Foundation::{HANDLE, INVALID_HANDLE_VALUE};
 use windows::Win32::Storage::FileSystem::WriteFile;
 use windows::Win32::System::IO::{
-    CreateIoCompletionPort, GetQueuedCompletionStatusEx, OVERLAPPED, OVERLAPPED_ENTRY,
+    CancelIoEx, CreateIoCompletionPort, GetQueuedCompletionStatusEx, OVERLAPPED, OVERLAPPED_ENTRY,
 };
 
 use super::buffers::AlignedBuffer;
 use super::qpc::{qpc_elapsed_us, qpc_now};
+use crate::drives::space::VolumeHandleGuard;
 
 /// Block size for sustained sequential write profiling: 1 MiB.
 pub const SUSTAINED_BLOCK_SIZE: u64 = 1024 * 1024;
@@ -73,8 +74,20 @@ pub struct SustainedAnalysis {
 
 /// Tracking metadata for in-flight requests in the pre-allocated pool.
 struct InFlightSlot {
+    raw_ovl: *mut OVERLAPPED,
     issued_qpc: i64,
     active: bool,
+}
+
+impl Drop for InFlightSlot {
+    fn drop(&mut self) {
+        if !self.raw_ovl.is_null() {
+            unsafe {
+                let _ = Box::from_raw(self.raw_ovl);
+            }
+            self.raw_ovl = std::ptr::null_mut();
+        }
+    }
 }
 
 /// Render a slice of float values into a zero-dependency Unicode block sparkline.
@@ -214,6 +227,86 @@ pub fn analyze_sustained_buckets(buckets: &[SecondBucket]) -> SustainedAnalysis 
     }
 }
 
+struct SustainedContext {
+    iocp: VolumeHandleGuard,
+    file_handle: HANDLE,
+    buffers: Vec<AlignedBuffer>,
+    slots: Vec<InFlightSlot>,
+}
+
+impl SustainedContext {
+    fn issue_slot(&mut self, slot: usize, block_idx: u64, num_blocks: u64, bs: u64) -> Result<()> {
+        let offset = (block_idx % num_blocks) * bs;
+        let slot_meta = &mut self.slots[slot];
+        let raw_ovl = slot_meta.raw_ovl;
+        unsafe {
+            *raw_ovl = mem::zeroed();
+            (*raw_ovl).Anonymous.Anonymous.Offset = offset as u32;
+            (*raw_ovl).Anonymous.Anonymous.OffsetHigh = (offset >> 32) as u32;
+        }
+
+        slot_meta.issued_qpc = qpc_now();
+        slot_meta.active = true;
+
+        let buf_ptr = self.buffers[slot].as_ptr();
+
+        let res = unsafe {
+            WriteFile(
+                self.file_handle,
+                Some(std::slice::from_raw_parts(buf_ptr, bs as usize)),
+                None,
+                Some(raw_ovl),
+            )
+        };
+
+        match res {
+            Ok(_) => Ok(()),
+            Err(ref e) if e.code() == windows::Win32::Foundation::ERROR_IO_PENDING.to_hresult() => {
+                Ok(())
+            }
+            Err(e) => {
+                self.slots[slot].active = false;
+                Err(e).context("WriteFile submission failed in sustained write engine")
+            }
+        }
+    }
+
+    fn drain_in_flight(&mut self) {
+        if !self.slots.iter().any(|s| s.active) {
+            return;
+        }
+        unsafe {
+            let _ = CancelIoEx(self.file_handle, None);
+        }
+        const MAX_ENTRIES: usize = 32;
+        let mut entries: [OVERLAPPED_ENTRY; MAX_ENTRIES] = unsafe { mem::zeroed() };
+        while self.slots.iter().any(|s| s.active) {
+            let mut n: u32 = 0;
+            let ok = unsafe {
+                GetQueuedCompletionStatusEx(self.iocp.0, &mut entries, &mut n, 500, false)
+            };
+            if ok.is_err() && n == 0 {
+                continue;
+            }
+            for entry in entries.iter().take(n as usize) {
+                if let Some(slot) = self
+                    .slots
+                    .iter_mut()
+                    .find(|s| s.raw_ovl == entry.lpOverlapped)
+                {
+                    slot.active = false;
+                }
+            }
+        }
+    }
+}
+
+impl Drop for SustainedContext {
+    fn drop(&mut self) {
+        self.drain_in_flight();
+    }
+}
+
 /// Execute a continuous unbuffered sequential write pass with pre-allocated 1-second bucketing.
 /// Guarantees zero heap allocations inside the IOCP completion loop.
 pub fn run_sustained_write_iocp<F>(
@@ -235,14 +328,14 @@ where
     }
 
     // 1. Create dedicated standalone IOCP
-    let iocp = unsafe {
+    let iocp = VolumeHandleGuard(unsafe {
         CreateIoCompletionPort(INVALID_HANDLE_VALUE, None, 0, 1)
             .context("Failed to create standalone I/O Completion Port")?
-    };
+    });
 
     // Associate file handle with completion port
     unsafe {
-        CreateIoCompletionPort(file_handle, Some(iocp), 1, 0)
+        CreateIoCompletionPort(file_handle, Some(iocp.0), 1, 0)
             .context("Failed to associate file handle with IOCP")?;
     }
 
@@ -252,17 +345,21 @@ where
         buffers.push(AlignedBuffer::new_random(bs as usize)?);
     }
 
-    // 3. Pre-allocate OVERLAPPED structures for zero-allocation I/O re-use
-    let mut ovl_pool: Vec<Box<OVERLAPPED>> = (0..qd)
-        .map(|_| Box::new(unsafe { mem::zeroed() }))
-        .collect();
-
-    let mut in_flight_slots: Vec<InFlightSlot> = (0..qd)
+    // 3. Pre-allocate pinned OVERLAPPED structures for zero-allocation I/O re-use
+    let slots: Vec<InFlightSlot> = (0..qd)
         .map(|_| InFlightSlot {
+            raw_ovl: Box::into_raw(Box::new(unsafe { mem::zeroed::<OVERLAPPED>() })),
             issued_qpc: 0,
             active: false,
         })
         .collect();
+
+    let mut ctx = SustainedContext {
+        iocp,
+        file_handle,
+        buffers,
+        slots,
+    };
 
     // 4. Pre-allocate time-series telemetry buckets
     let max_buckets = (max_duration_secs as usize + 64).max(128);
@@ -281,61 +378,12 @@ where
     let mut seq_block_idx: u64 = 0;
     let mut in_flight_count: usize = 0;
 
-    // Helper closure to dispatch slot I/O
-    let issue_slot = |_slot: usize,
-                      block_idx: u64,
-                      ovl: &mut Box<OVERLAPPED>,
-                      buf: &AlignedBuffer,
-                      slot_meta: &mut InFlightSlot|
-     -> Result<()> {
-        let offset = (block_idx % num_blocks) * bs;
-        unsafe {
-            *ovl.as_mut() = mem::zeroed();
-        }
-        ovl.Anonymous.Anonymous.Offset = offset as u32;
-        ovl.Anonymous.Anonymous.OffsetHigh = (offset >> 32) as u32;
-
-        let issued_qpc = qpc_now();
-        slot_meta.issued_qpc = issued_qpc;
-        slot_meta.active = true;
-
-        let raw_ovl = ovl.as_mut() as *mut OVERLAPPED;
-        let buf_ptr = buf.as_ptr();
-
-        let res = unsafe {
-            WriteFile(
-                file_handle,
-                Some(std::slice::from_raw_parts(buf_ptr, bs as usize)),
-                None,
-                Some(raw_ovl),
-            )
-        };
-
-        match res {
-            Ok(_) => {}
-            Err(ref e) if e.code() == windows::Win32::Foundation::ERROR_IO_PENDING.to_hresult() => {
-            }
-            Err(e) => {
-                slot_meta.active = false;
-                return Err(e).context("WriteFile submission failed in sustained write engine");
-            }
-        }
-
-        Ok(())
-    };
-
     // 6. Prime the queue with initial batch
     for slot in 0..qd {
         if seq_block_idx >= num_blocks {
             break;
         }
-        issue_slot(
-            slot,
-            seq_block_idx,
-            &mut ovl_pool[slot],
-            &buffers[slot],
-            &mut in_flight_slots[slot],
-        )?;
+        ctx.issue_slot(slot, seq_block_idx, num_blocks, bs)?;
         seq_block_idx += 1;
         in_flight_count += 1;
     }
@@ -361,7 +409,7 @@ where
 
         let mut n_removed: u32 = 0;
         let ok = unsafe {
-            GetQueuedCompletionStatusEx(iocp, &mut entries, &mut n_removed, timeout_ms, false)
+            GetQueuedCompletionStatusEx(ctx.iocp.0, &mut entries, &mut n_removed, timeout_ms, false)
         };
 
         if ok.is_err() {
@@ -413,66 +461,67 @@ where
             let bytes = entry.dwNumberOfBytesTransferred as u64;
 
             // Locate slot by matching OVERLAPPED pointer
-            let slot = match ovl_pool
+            let slot = match ctx
+                .slots
                 .iter()
-                .position(|b| std::ptr::eq(&**b, entry.lpOverlapped))
+                .position(|s| s.raw_ovl == entry.lpOverlapped)
             {
                 Some(s) => s,
                 None => continue,
             };
 
-            in_flight_slots[slot].active = false;
+            ctx.slots[slot].active = false;
             in_flight_count -= 1;
 
-            let latency_us = qpc_elapsed_us(in_flight_slots[slot].issued_qpc, now_qpc);
+            let status = unsafe { (*entry.lpOverlapped).Internal as i32 };
+            if status < 0 || bytes == 0 {
+                anyhow::bail!(
+                    "Async sustained WriteFile failed (NTSTATUS 0x{:08X}, {} bytes)",
+                    status as u32,
+                    bytes
+                );
+            }
+
+            let latency_us = qpc_elapsed_us(ctx.slots[slot].issued_qpc, now_qpc);
             active_hist.saturating_record(latency_us);
             cur_sec_bytes += bytes;
             cur_sec_io += 1;
             cumulative_bytes += bytes;
 
-            // Re-issue write if more data remains to be written and time has not expired
-            if cumulative_bytes < target_bytes
+            // Re-issue write only while target blocks remain and time has not expired
+            if seq_block_idx < num_blocks
+                && cumulative_bytes < target_bytes
                 && now_elapsed < max_duration
                 && !cancelled.load(Ordering::Relaxed)
             {
-                issue_slot(
-                    slot,
-                    seq_block_idx,
-                    &mut ovl_pool[slot],
-                    &buffers[slot],
-                    &mut in_flight_slots[slot],
-                )?;
+                ctx.issue_slot(slot, seq_block_idx, num_blocks, bs)?;
                 seq_block_idx += 1;
                 in_flight_count += 1;
             }
         }
     }
 
-    // 8. Drain any remaining in-flight completions
-    while in_flight_count > 0 {
-        let mut n: u32 = 0;
-        let _ = unsafe { GetQueuedCompletionStatusEx(iocp, &mut entries, &mut n, 200, false) };
-        for entry in entries.iter().take(n as usize) {
-            if let Some(slot) = ovl_pool
-                .iter()
-                .position(|b| std::ptr::eq(&**b, entry.lpOverlapped))
-            {
-                if in_flight_slots[slot].active {
-                    in_flight_slots[slot].active = false;
-                    in_flight_count -= 1;
-                }
-            }
-        }
-        if n == 0 {
-            break;
-        }
-    }
+    // 8. Drain any remaining in-flight completions before finalizing buckets & dropping context
+    let final_elapsed_secs = (run_start.elapsed().as_secs_f64() - (current_sec as f64)).max(0.0);
+    ctx.drain_in_flight();
 
-    // 9. Finalize final active bucket
-    if cur_sec_bytes > 0 || buckets.is_empty() {
+    // 9. Finalize final active bucket (normalized by actual elapsed fraction)
+    let cum_gib = (cumulative_bytes as f64) / (1024.0 * 1024.0 * 1024.0);
+    if !buckets.is_empty()
+        && cur_sec_bytes > 0
+        && final_elapsed_secs < 0.1
+        && buckets.last().is_some_and(|b| b.bytes > 0)
+    {
+        if let Some(last) = buckets.last_mut() {
+            last.bytes += cur_sec_bytes;
+            last.io_count += cur_sec_io;
+            last.mb_s = (last.bytes as f64) / ((1.0 + final_elapsed_secs) * 1_000_000.0);
+            last.cumulative_gib = cum_gib;
+            on_progress(cumulative_bytes, last.mb_s);
+        }
+    } else if cur_sec_bytes > 0 || buckets.is_empty() {
         let p99 = active_hist.value_at_quantile(0.99);
-        let mb_s = (cur_sec_bytes as f64) / 1_000_000.0;
-        let cum_gib = (cumulative_bytes as f64) / (1024.0 * 1024.0 * 1024.0);
+        let mb_s = (cur_sec_bytes as f64) / (final_elapsed_secs.max(0.001) * 1_000_000.0);
         buckets.push(SecondBucket {
             second: (current_sec + 1) as u32,
             bytes: cur_sec_bytes,
@@ -482,11 +531,6 @@ where
             cumulative_gib: cum_gib,
         });
         on_progress(cumulative_bytes, mb_s);
-    }
-
-    // Clean up IOCP handle
-    unsafe {
-        let _ = CloseHandle(iocp);
     }
 
     Ok(buckets)
