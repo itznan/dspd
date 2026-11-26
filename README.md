@@ -41,28 +41,32 @@
 
 ---
 
-## Quick Start
+## Quick Start (No Installation)
 
-Open **PowerShell** and run:
+Run the interactive drive selector directly in **PowerShell** (downloads the latest binary to `%TEMP%\dspd`, discovers all connected drives, and prompts for target selection):
 
 ```powershell
-iex (irm https://github.com/itznan/dspd/releases/latest/download/dspd.ps1)
+irm https://github.com/itznan/dspd/releases/latest/download/dspd.ps1 | iex
 ```
 
-This downloads the latest `dspd` release, lists all connected drives (NVMe, SATA, USB), prompts for target selection, and launches the benchmark.
-
 <details>
-<summary>Prefer to inspect the script first?</summary>
+<summary>Inspect first or pass launcher parameters</summary>
 
 ```powershell
+# Download and inspect before running
 irm https://github.com/itznan/dspd/releases/latest/download/dspd.ps1 -OutFile dspd.ps1
 notepad .\dspd.ps1
 .\dspd.ps1
+
+# Pass launcher options (e.g. quick 512 MiB single-pass run without prompt)
+.\dspd.ps1 -Size 512MiB -Passes 1 -Duration 3 -Yes
 ```
+
+Supported launcher flags: `-Size`, `-Passes`, `-Duration`, `-Warmup`, `-Profile`, `-Json`, `-Yes`, `-Elevate`.
 </details>
 
 > [!NOTE]
-> If running in PowerShell where script execution is restricted, invoke the native executable directly using `dspd.exe` or enable user script execution:
+> If PowerShell script execution is restricted on your system, install the native binary using one of the options below to invoke `dspd.exe` directly, or enable user script execution:
 > ```powershell
 > Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned
 > ```
@@ -71,23 +75,98 @@ notepad .\dspd.ps1
 
 ## Installation
 
-### 1. Windows Setup Installer (`.exe`)
-Download the latest installer from [GitHub Releases](https://github.com/itznan/dspd/releases/latest):
-- **`dspd-Setup-v*-x86_64.exe`** (Standard 64-bit Windows)
-- **`dspd-Setup-v*-arm64.exe`** (ARM64 Windows / Surface Pro)
+Choose the method that best fits your workflow (**Windows 10 / 11**, **x64** and **ARM64**):
 
-The installer sets up `dspd` in `Program Files`, adds it to the system `PATH` for immediate terminal access, and adds Start Menu shortcuts.
+| Method | Best For | Adds to `PATH` | Admin Required |
+| :--- | :--- | :--- | :--- |
+| **Windows Setup (`.exe`)** | Standard setup, Start Menu shortcuts & uninstaller | System `PATH` | Yes |
+| **Portable CLI (`.zip`)** | Zero-admin user install or portable USB toolkit | Optional (User `PATH`) | No |
+| **GitHub CLI (`gh`)** | Downloading release assets from terminal | Manual | No |
+| **Cargo (`cargo install`)** | Rust developers building from source | `~/.cargo/bin` | No |
 
-### 2. Standalone Portable Archive (`.zip`)
-Download `dspd-v*-x86_64-pc-windows-msvc.zip` from [Releases](https://github.com/itznan/dspd/releases/latest), unzip, and run `dspd.exe`.
+### 1. Windows Setup Installer (`.exe`) — *Recommended*
 
-### 3. Build From Source
+Install from PowerShell (auto-detects `x86_64` or `arm64` from the latest release):
+
+```powershell
+$arch = if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { 'arm64' } else { 'x86_64' }
+$asset = (Invoke-RestMethod 'https://api.github.com/repos/itznan/dspd/releases/latest' -Headers @{ 'User-Agent' = 'dspd' }).assets |
+    Where-Object { $_.name -like "dspd-Setup-*-$arch.exe" } | Select-Object -First 1
+$installer = Join-Path $env:TEMP $asset.name
+Invoke-WebRequest $asset.browser_download_url -OutFile $installer
+Start-Process $installer -Wait   # Add -ArgumentList '/VERYSILENT /NORESTART' for silent install
+```
+
+Or download directly from [GitHub Releases](https://github.com/itznan/dspd/releases/latest):
+- **`dspd-Setup-v*-x86_64.exe`** (64-bit x64 Windows)
+- **`dspd-Setup-v*-arm64.exe`** (ARM64 Windows / Snapdragon)
+
+The installer places `dspd.exe` and `dspd-interactive.ps1` in `Program Files\dspd`, adds `dspd` to system `PATH`, and creates Start Menu shortcuts (`dspd Interactive Benchmark` and `dspd Command Prompt`).
+
+### 2. Portable Archive (`.zip`) — *No Admin Required*
+
+Install `dspd.exe` into `%LOCALAPPDATA%\dspd` and add it to your **User `PATH`** in PowerShell:
+
+```powershell
+$arch = if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { 'aarch64-pc-windows-msvc' } else { 'x86_64-pc-windows-msvc' }
+$asset = (Invoke-RestMethod 'https://api.github.com/repos/itznan/dspd/releases/latest' -Headers @{ 'User-Agent' = 'dspd' }).assets |
+    Where-Object { $_.name -like "*$arch.zip" -and $_.name -notlike '*.sha256' } | Select-Object -First 1
+$zip = Join-Path $env:TEMP $asset.name; $dest = Join-Path $env:LOCALAPPDATA 'dspd'
+Invoke-WebRequest $asset.browser_download_url -OutFile $zip
+Expand-Archive $zip -DestinationPath $dest -Force
+Get-ChildItem $dest -Recurse -File | Where-Object { $_.DirectoryName -ne $dest } | Move-Item -Destination $dest -Force
+Get-ChildItem $dest -Directory | Remove-Item -Recurse -Force
+$paths = @([Environment]::GetEnvironmentVariable('Path', 'User') -split ';' | Where-Object { $_ })
+if ($paths -notcontains $dest) { [Environment]::SetEnvironmentVariable('Path', (($paths + $dest) -join ';'), 'User') }
+Remove-Item $zip -Force
+```
+
+*(Open a new terminal window after updating `PATH` so `dspd.exe` is recognized.)*
+
+Or download `dspd-v*-x86_64-pc-windows-msvc.zip` / `dspd-v*-aarch64-pc-windows-msvc.zip` manually from [Releases](https://github.com/itznan/dspd/releases/latest), unzip, and run `dspd.exe`.
+
+### 3. GitHub CLI (`gh`)
+
+```powershell
+# Download the x64 Setup installer
+gh release download -R itznan/dspd -p "dspd-Setup-*-x86_64.exe"
+
+# Or download the portable x64 zip + SHA-256 checksum
+gh release download -R itznan/dspd -p "*x86_64-pc-windows-msvc.zip*"
+```
+
+### 4. Cargo / Build From Source
+
+Requires Rust `1.80.0+` ([rustup.rs](https://rustup.rs/)):
+
+```powershell
+# Install directly to ~/.cargo/bin (already on PATH)
+cargo install --git https://github.com/itznan/dspd
+```
+
+Or clone and build manually:
+
 ```powershell
 git clone https://github.com/itznan/dspd.git
 cd dspd
 cargo build --release
 ```
+
 The optimized executable will be located at `target\release\dspd.exe`.
+
+<details>
+<summary>Verify downloads with SHA-256 checksums</summary>
+
+Every `.exe` and `.zip` asset ships with a matching `.sha256` file in [Releases](https://github.com/itznan/dspd/releases/latest):
+
+```powershell
+Get-FileHash .\dspd-v0.2.0.9-x86_64-pc-windows-msvc.zip -Algorithm SHA256
+Get-Content  .\dspd-v0.2.0.9-x86_64-pc-windows-msvc.zip.sha256
+```
+</details>
+
+> [!TIP]
+> `dspd.exe` runs non-elevated (`asInvoker`) by default. If Windows denies write permission to a drive's root directory (for example, testing a secondary fixed drive `D:\` with restricted root ACLs), run your terminal as Administrator.
 
 ---
 
@@ -102,17 +181,17 @@ Options:
       --passes <PASSES>            Number of passes per test [default: 3]
       --duration <DURATION>        Duration of each pass in seconds [default: 5]
       --warmup <WARMUP>            Warmup duration in seconds (discarded from metrics) [default: 1]
-      --include-removable          Include removable drives (e.g. USB flash drives)
-      --profile <PROFILE>          Run a single named profile or preset (e.g. "RND4K Q32T1", "llm-stream")
-      --output-dir <OUTPUT_DIR>    Output directory for reports [default: Desktop]
+      --include-removable          Include removable drives (e.g. USB drives)
+      --profile <PROFILE>          Run a single named profile only (e.g. "RND4K Q32T1")
+      --output-dir <OUTPUT_DIR>    Output directory for reports (default: Desktop)
       --json                       Output report in JSON format to console
       --yes                        Skip SSD wear confirmation prompt
       --validate                   Print benchmark profile specifications and test parameters
-      --sustained <SIZE_GIB>       Sustained write profiling mode to measure SLC cache exhaustion (e.g. 50 or 50GiB)
+      --sustained <SIZE_GIB>       Sustained write profiling mode to measure pseudo-SLC cache exhaustion (e.g. 50 or 50GiB)
       --sustained-duration <SECS>  Sustained write test maximum duration in seconds
       --rw-mix <READ:WRITE>        Mixed Read/Write workload ratio (e.g. 70:30)
       --engine <ENGINE>            Storage engine backend: "iocp" (default) or "ioring" (Windows 11) [default: iocp]
-      --affinity <MASK_OR_LIST>    CPU affinity mask (hex e.g. 0xF) or core ranges (e.g. 0-3 or 0,2,4)
+      --affinity <MASK_OR_LIST>    CPU affinity mask (hex e.g. 0xF) or comma-separated core indices / ranges (e.g. 0,2,4 or 0-3)
   -h, --help                       Print help
   -V, --version                    Print version
 ```
